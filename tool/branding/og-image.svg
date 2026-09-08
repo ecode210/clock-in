@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Clock-In">
+  <!-- Link preview card, rendered to web/og-image.png at 1200x630, the size
+       Open Graph and Twitter both expect. The mark and the text are treated
+       as one centred group so the card stays balanced when cropped. -->
+  <rect width="1200" height="630" fill="#171717"/>
+
+  <g transform="translate(254, 214)">
+    <g fill="none" stroke="#FAFAFA" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="101" cy="101" r="93"/>
+      <path d="M101 45 V101 L140 124"/>
+    </g>
+  </g>
+
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" fill="#FAFAFA">
+    <text x="516" y="288" font-size="96" font-weight="700" letter-spacing="-2">Clock-In</text>
+    <text x="516" y="356" font-size="38" font-weight="400" fill="#A1A1A1">Geofenced staff attendance</text>
+  </g>
+</svg>

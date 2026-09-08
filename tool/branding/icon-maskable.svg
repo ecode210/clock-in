@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Clock-In">
+  <!-- Maskable variant: the background bleeds to the edges because Android
+       crops it to whatever shape the launcher uses, and the glyph is held
+       inside the 80% safe circle so no crop can clip it. -->
+  <rect width="512" height="512" fill="#171717"/>
+  <g fill="none" stroke="#FAFAFA" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="256" cy="256" r="118"/>
+    <path d="M256 185 V256 L305 286"/>
+  </g>
+</svg>

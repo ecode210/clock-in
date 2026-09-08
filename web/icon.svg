@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Clock-In">
+  <!-- Source of truth for every raster icon in web/. Colours match the app's
+       Forui neutral theme: #171717 primary, #FAFAFA on top of it. -->
+  <rect width="512" height="512" rx="112" fill="#171717"/>
+  <g fill="none" stroke="#FAFAFA" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="256" cy="256" r="150"/>
+    <path d="M256 166 V256 L318 294"/>
+  </g>
+</svg>

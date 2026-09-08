@@ -1,23 +1,30 @@
 {
-    "name": "Staff Clock-In",
+    "name": "Clock-In: geofenced staff attendance",
     "short_name": "Clock-In",
-    "start_url": ".",
+    "start_url": "/",
+    "scope": "/",
+    "id": "/",
     "display": "standalone",
-    "background_color": "#0F766E",
-    "theme_color": "#0F766E",
-    "description": "Geofenced staff clock-in and attendance tracking.",
+    "background_color": "#FFFFFF",
+    "theme_color": "#FFFFFF",
+    "description": "Staff clock in and out only from inside your workplace geofence, verified by live selfie and passkey, while admins track hours and attendance in real time.",
     "orientation": "portrait-primary",
+    "categories": ["business", "productivity"],
+    "lang": "en",
+    "dir": "ltr",
     "prefer_related_applications": false,
     "icons": [
         {
             "src": "icons/Icon-192.png",
             "sizes": "192x192",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any"
         },
         {
             "src": "icons/Icon-512.png",
             "sizes": "512x512",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any"
         },
         {
             "src": "icons/Icon-maskable-192.png",

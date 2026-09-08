@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Clock-In">
+  <!-- Same mark as web/icon.svg, redrawn for 16-32px: a heavier stroke and a
+       larger dial, because the app icon's hairline vanishes at tab size. -->
+  <rect width="512" height="512" rx="96" fill="#171717"/>
+  <g fill="none" stroke="#FAFAFA" stroke-width="44" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="256" cy="256" r="166"/>
+    <path d="M256 152 V256 L326 300"/>
+  </g>
+</svg>
