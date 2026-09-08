@@ -1,0 +1,49 @@
+---
+description: Never surface technical error detail in the UI; route it to dev logs instead
+alwaysApply: true
+---
+
+# User-Facing Errors
+
+Anything rendered on screen must be plain, descriptive prose that tells the
+person what happened and what to do next. Never render an error code, HTTP or
+SQLSTATE status, exception class name, raw JSON body, stack trace, or a server
+message you have not deliberately written for users.
+
+Technical detail is not discarded; it goes to `lib/src/core/dev_log.dart`
+(`logFail`), which is compiled out of release builds.
+
+## Rules
+
+- Convert every caught error with `toAppError` / `errorMessage` from
+  `lib/src/core/app_error.dart`. Never build display text from an exception.
+- Put machine-readable values in `AppError.code` (for branching) and raw detail
+  in `AppError.technical` (for logs). Only `AppError.message` reaches the UI.
+- Only pass server text through when it was written for users: our Postgres
+  functions raise friendly prose and set `hint`, and `manage-staff` returns a
+  friendly `error` field. Everything else collapses to a generic message.
+- Log every action with `logAction` / `logDone` / `logFail` so failures are
+  diagnosable without showing internals to the user.
+
+```dart
+// ❌ BAD: leaks a JSON body, a code, and a class name onto the screen
+setState(() => _error = error.toString());
+return AppError('Verification failed: $error');
+return AppError(authException.message, code: authException.code);
+
+// ✅ GOOD: friendly text on screen, detail in the log
+try {
+  await repository.clockIn(...);
+} catch (error, stack) {
+  logFail('clock_in', error, stack);          // full detail, debug only
+  setState(() => _error = errorMessage(error)); // safe prose
+}
+
+// ✅ GOOD: unrecognised cause stays vague on screen
+return AppError(
+  'Something went wrong on our end. Please try again, and contact your '
+  'administrator if it keeps happening.',
+  code: 'auth_error',
+  technical: '${error.statusCode} ${error.message}',
+);
+```

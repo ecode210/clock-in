@@ -1,0 +1,34 @@
+---
+description: Never write or run automated tests in this project
+alwaysApply: true
+---
+
+# No Tests
+
+Do not write automated tests, and do not run them. This applies to unit, widget,
+integration, and golden tests alike.
+
+- Never create or edit files under `test/`, `integration_test/`, or any
+  `*_test.dart`.
+- Never run `flutter test`, `dart test`, or any command whose purpose is to
+  execute a test suite.
+- Never add a test as "verification" of a change, and never suggest adding one.
+- This holds for delegated work too: any subagent or background task you launch
+  must be told not to write or run tests.
+
+## Verifying work instead
+
+Confirm changes with static checks and by reasoning about the code:
+
+```bash
+# ✅ GOOD: static verification
+fvm flutter analyze
+fvm flutter build web
+
+# ❌ BAD: never do this
+fvm flutter test
+fvm flutter test test/phone_layout_test.dart
+```
+
+If a change genuinely cannot be verified without executing it, say so plainly
+and let the user exercise it in the running app.

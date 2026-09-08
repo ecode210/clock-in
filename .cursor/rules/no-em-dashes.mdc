@@ -1,0 +1,36 @@
+---
+description: Never use em dashes or en dashes anywhere in this project
+alwaysApply: true
+---
+
+# No Em Dashes or En Dashes
+
+Never write an em dash (U+2014) or an en dash (U+2013). This applies to
+everything: code, comments, doc comments, user-facing strings, commit messages,
+Markdown, rule files, and chat replies.
+
+This file deliberately names the characters by code point rather than printing
+them, so that `grep -rIn '[\u2014\u2013]'` over the project stays empty.
+
+Use ordinary punctuation instead, chosen to fit the sentence:
+
+- Parenthetical aside: a comma pair or parentheses.
+- Introducing an explanation or a list: a colon.
+- Joining two independent clauses: a semicolon, or split into two sentences.
+- Numeric and date ranges: a plain hyphen, or the word "to".
+- A "no value" placeholder in the UI: a plain hyphen.
+
+```dart
+// BAD: reads "not discarded \u2014 it goes to the log"
+/// Technical detail is not discarded \u2014 it goes to the log.
+return value == null ? '\u2014' : format(value);
+Text('$from \u2013 $to');
+
+// GOOD
+/// Technical detail is not discarded: it goes to the log.
+return value == null ? '-' : format(value);
+Text('$from to $to');
+```
+
+Hyphens in compound words (`mobile-first`, `clock-in`) are fine, as are `·`
+separators and `…` ellipses. Only the two long dashes are banned.

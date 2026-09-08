@@ -1,0 +1,47 @@
+project_id = "clock-in"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+
+[storage]
+enabled = true
+file_size_limit = "5MiB"
+
+[storage.buckets.selfies]
+public = false
+file_size_limit = "5MiB"
+allowed_mime_types = ["image/jpeg", "image/png", "image/webp"]
+
+[auth]
+enabled = true
+site_url = "http://localhost:3001"
+additional_redirect_urls = ["http://localhost:3001"]
+jwt_expiry = 3600
+enable_signup = false
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = false
+enable_confirmations = false
+
+# Passkeys are one of the two configurable anti-buddy-punching checks. The
+# relying party must match the domain the app is served from; changing it
+# invalidates every passkey staff have already enrolled.
+[auth.passkey]
+enabled = true
+
+[auth.webauthn]
+rp_display_name = "Clock-In"
+rp_id = "localhost"
+rp_origins = ["http://localhost:3001"]
+
+[functions.manage-staff]
+verify_jwt = true

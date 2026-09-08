@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Port 3001 is not arbitrary: it is the WebAuthn relying party origin
+      // registered on the Supabase project, so passkeys fail on any other port.
+      //
+      // Flutter starts Chrome with a throwaway profile, so enrolled passkeys
+      // and location and camera grants are discarded on every run. To keep
+      // them, run `flutter run -d web-server --web-port 3001` and open the URL
+      // in your normal browser instead.
+      "name": "Clock-In",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "chrome",
+      "toolArgs": ["--web-port", "3001"]
+    }
+  ]
+}
