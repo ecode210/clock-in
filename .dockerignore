@@ -1,0 +1,17 @@
+# Keeps the build context small and stops host artefacts from leaking into the
+# image, where they would shadow what the builder compiles.
+.git
+.github
+.idea
+.vscode
+.cursor
+.dart_tool
+build
+coverage
+test
+supabase
+*.iml
+*.log
+.DS_Store
+.flutter-plugins-dependencies
+README.md
