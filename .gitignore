@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local notes: holds the admin sign-in details, so it stays off the public repo.
+/OVERVIEW.md
