@@ -1,3 +1,4 @@
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -63,6 +64,7 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
   static const _maxRadius = 1000.0;
 
   final _mapController = MapController();
+  late final FContinuousSliderController _radiusController;
   late final TextEditingController _orgNameController;
   late final TextEditingController _locationNameController;
 
@@ -85,10 +87,14 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
     _radius = widget.initial.radiusMeters.toDouble();
     _timezone = widget.initial.timezone;
     _maxAccuracy = widget.initial.maxAccuracyMeters;
+    _radiusController = FContinuousSliderController(
+      value: FSliderValue(max: _radiusFraction),
+    );
   }
 
   @override
   void dispose() {
+    _radiusController.dispose();
     _orgNameController.dispose();
     _locationNameController.dispose();
     _mapController.dispose();
@@ -110,6 +116,31 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
 
   double _radiusFromFraction(double fraction) =>
       _minRadius + fraction * (_maxRadius - _minRadius);
+
+  /// Forui re-attaches the slider while a [LayoutBuilder] is still laying out
+  /// the track. That notifies [onChange] during build, so the radius is applied
+  /// after the frame when we are not already building.
+  void _onRadiusChange(FSliderValue value) {
+    final next = _radiusFromFraction(value.max);
+    if (next == _radius) return;
+
+    void apply() {
+      if (!mounted) return;
+      final latest = _radiusFromFraction(_radiusController.value.max);
+      if (latest == _radius) return;
+      setState(() => _radius = latest);
+    }
+
+    switch (SchedulerBinding.instance.schedulerPhase) {
+      case SchedulerPhase.idle:
+      case SchedulerPhase.postFrameCallbacks:
+        apply();
+      case SchedulerPhase.transientCallbacks:
+      case SchedulerPhase.midFrameMicrotasks:
+      case SchedulerPhase.persistentCallbacks:
+        WidgetsBinding.instance.addPostFrameCallback((_) => apply());
+    }
+  }
 
   Future<void> _useMyLocation() async {
     setState(() => _locating = true);
@@ -292,10 +323,8 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
               const SizedBox(height: 8),
               FSlider(
                 control: FSliderControl.managedContinuous(
-                  initial: FSliderValue(max: _radiusFraction),
-                  onChange: (value) => setState(
-                    () => _radius = _radiusFromFraction(value.max),
-                  ),
+                  controller: _radiusController,
+                  onChange: _onRadiusChange,
                 ),
                 tooltipBuilder: (_, fraction) =>
                     Text(formatDistance(_radiusFromFraction(fraction))),

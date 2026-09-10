@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../features/admin/admin_dashboard_screen.dart';
 import '../features/admin/admin_settings_screen.dart';
 import '../features/admin/admin_shell.dart';
+import '../features/admin/attendance_day_screen.dart';
 import '../features/admin/attendance_history_screen.dart';
 import '../features/admin/geofence_settings_screen.dart';
 import '../features/admin/security_settings_screen.dart';
@@ -41,6 +42,9 @@ class AppRoutes {
   static const adminDashboard = '/admin';
   static const adminAttendance = '/admin/attendance';
   static const adminStaff = '/admin/staff';
+
+  /// Day list under Attendance, so the tab stays selected.
+  static String adminAttendanceDay(String date) => '$adminAttendance/$date';
 
   /// Hub tab. The three routes below sit under it so the tab stays selected
   /// while a sub-page is open.
@@ -178,6 +182,12 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AppRoutes.adminAttendance,
             builder: (context, state) => const AttendanceHistoryScreen(),
+          ),
+          GoRoute(
+            path: '${AppRoutes.adminAttendance}/:date',
+            builder: (context, state) => AttendanceDayScreen(
+              date: state.pathParameters['date']!,
+            ),
           ),
           GoRoute(
             path: AppRoutes.adminStaff,

@@ -1,62 +1,32 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:forui/forui.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/formatters.dart';
 import '../../models/attendance_record.dart';
+import '../../routing/router.dart';
 import '../../services/attendance_repository.dart';
 import '../../services/staff_repository.dart';
 import '../shared/widgets.dart';
-import 'attendance_row_tile.dart';
 
-/// Filter state for the admin's attendance browser.
-class AttendanceFilter {
-  const AttendanceFilter({required this.from, required this.to, this.userId});
-
-  final DateTime from;
-  final DateTime to;
-  final String? userId;
-
-  AttendanceFilter copyWith({
-    DateTime? from,
-    DateTime? to,
-    String? userId,
-    bool clearUser = false,
-  }) => AttendanceFilter(
-    from: from ?? this.from,
-    to: to ?? this.to,
-    userId: clearUser ? null : (userId ?? this.userId),
-  );
-}
-
-AttendanceFilter _defaultFilter() => AttendanceFilter(
-  from: DateTime.now().subtract(const Duration(days: 29)),
-  to: DateTime.now(),
-);
-
-class AttendanceFilterController extends Notifier<AttendanceFilter> {
+/// Staff filter for the attendance calendar. Null means every staff member.
+class AttendanceStaffFilter extends Notifier<String?> {
   @override
-  AttendanceFilter build() => _defaultFilter();
+  String? build() => null;
 
-  void update(AttendanceFilter filter) => state = filter;
-
-  void reset() => state = _defaultFilter();
+  void set(String? userId) => state = userId;
 }
 
-final attendanceFilterProvider =
-    NotifierProvider<AttendanceFilterController, AttendanceFilter>(
-      AttendanceFilterController.new,
-    );
+final attendanceStaffFilterProvider = NotifierProvider<AttendanceStaffFilter, String?>(AttendanceStaffFilter.new);
 
-final filteredAttendanceProvider = FutureProvider<List<AttendanceRecord>>((
-  ref,
-) {
-  final filter = ref.watch(attendanceFilterProvider);
-  return ref.watch(attendanceRepositoryProvider).allRecords(
-    from: filter.from,
-    to: filter.to,
-    userId: filter.userId,
-  );
+/// One organisation month of attendance, keyed by year, month, and optional
+/// staff id. Changing month is a new page of data rather than a date range.
+final monthAttendanceProvider = FutureProvider.family<List<AttendanceRecord>, (int, int, String?)>((ref, key) {
+  final (year, month, userId) = key;
+  final from = DateTime(year, month, 1);
+  final to = DateTime(year, month + 1, 0);
+  return ref.watch(attendanceRepositoryProvider).allRecords(from: from, to: to, userId: userId, limit: 2000);
 });
 
 class AttendanceHistoryScreen extends ConsumerWidget {
@@ -64,7 +34,7 @@ class AttendanceHistoryScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final records = ref.watch(filteredAttendanceProvider);
+    final today = ref.watch(orgTodayProvider);
 
     return AppScaffold(
       childPad: false,
@@ -74,95 +44,95 @@ class AttendanceHistoryScreen extends ConsumerWidget {
           HeaderAction(
             icon: FLucideIcons.refreshCw,
             semanticsLabel: 'Refresh',
-            onPress: () => ref.invalidate(filteredAttendanceProvider),
+            onPress: () => ref.invalidate(monthAttendanceProvider),
           ),
         ],
       ),
-      child: PagePadding(
-        maxWidth: 700,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const _FilterCard(),
-            const SizedBox(height: gutter),
-            AsyncSection(
-              value: records,
-              onRetry: () => ref.invalidate(filteredAttendanceProvider),
-              builder: (rows) => _Results(rows: rows),
-            ),
-          ],
-        ),
+      child: AsyncSection(
+        value: today,
+        onRetry: () => ref.invalidate(orgTodayProvider),
+        builder: (orgToday) => _MonthBody(today: orgToday),
       ),
     );
   }
 }
 
-class _FilterCard extends ConsumerWidget {
-  const _FilterCard();
+class _MonthBody extends ConsumerStatefulWidget {
+  const _MonthBody({required this.today});
 
-  /// The calendar comes up from the bottom rather than in a dialog: it is a
-  /// tall control and a sheet is what a phone user expects for one.
-  Future<void> _pickRange(
-    BuildContext context,
-    WidgetRef ref,
-    AttendanceFilter filter,
-  ) async {
-    final picked = await showFSheet<(DateTime, DateTime)>(
-      context: context,
-      side: FLayout.btt,
-      mainAxisMaxRatio: null,
-      useSafeArea: true,
-      builder: (sheetContext) =>
-          _RangeSheet(initial: (filter.from, filter.to)),
-    );
+  final DateTime today;
 
-    if (picked != null) {
-      ref
-          .read(attendanceFilterProvider.notifier)
-          .update(filter.copyWith(from: picked.$1, to: picked.$2));
-    }
+  @override
+  ConsumerState<_MonthBody> createState() => _MonthBodyState();
+}
+
+class _MonthBodyState extends ConsumerState<_MonthBody> {
+  late DateTime _month = DateTime(widget.today.year, widget.today.month);
+
+  bool get _atCurrentMonth => _month.year == widget.today.year && _month.month == widget.today.month;
+
+  void _shiftMonth(int delta) {
+    final next = DateTime(_month.year, _month.month + delta);
+    final current = DateTime(widget.today.year, widget.today.month);
+    if (next.isAfter(current)) return;
+    setState(() => _month = next);
   }
 
   @override
+  Widget build(BuildContext context) {
+    final userId = ref.watch(attendanceStaffFilterProvider);
+    final records = ref.watch(monthAttendanceProvider((_month.year, _month.month, userId)));
+
+    return PagePadding(
+      maxWidth: 700,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _StaffFilter(),
+          const SizedBox(height: gutter),
+          AsyncSection(
+            value: records,
+            onRetry: () => ref.invalidate(monthAttendanceProvider((_month.year, _month.month, userId))),
+            builder: (rows) => _MonthCalendar(
+              month: _month,
+              today: widget.today,
+              records: rows,
+              atCurrentMonth: _atCurrentMonth,
+              onPrev: () => _shiftMonth(-1),
+              onNext: _atCurrentMonth ? null : () => _shiftMonth(1),
+              onSelect: (day) => context.go(AppRoutes.adminAttendanceDay(dateKey(day))),
+              onSelectOverflow: (day) {
+                final current = DateTime(widget.today.year, widget.today.month);
+                final target = DateTime(day.year, day.month);
+                if (target.isAfter(current)) return;
+                setState(() => _month = target);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StaffFilter extends ConsumerWidget {
+  const _StaffFilter();
+
+  @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final filter = ref.watch(attendanceFilterProvider);
+    final userId = ref.watch(attendanceStaffFilterProvider);
     final staff = ref.watch(staffListProvider).value ?? const [];
 
     return SectionCard(
       title: 'Filter',
-      trailing: FButton(
-        variant: FButtonVariant.primary,
-        size: FButtonSizeVariant.sm,
-        prefix: const Icon(FLucideIcons.rotateCcw),
-        onPress: () => ref.read(attendanceFilterProvider.notifier).reset(),
-        child: const Text('Reset'),
-      ),
       children: [
-        FButton(
-          variant: FButtonVariant.outline,
-          onPress: () => _pickRange(context, ref, filter),
-          prefix: const Icon(FLucideIcons.calendarDays),
-          child: ButtonLabel(
-            '${formatShortDay(filter.from)} to ${formatShortDay(filter.to)}',
-          ),
-        ),
-        const SizedBox(height: 12),
         FSelect<String>(
-          items: {
-            'Everyone': _everyone,
-            for (final person in staff) person.displayName: person.id,
-          },
-          // Lifted, so the filter provider stays the single source of truth
-          // and the Reset button above is reflected in the field.
+          items: {'Everyone': _everyone, for (final person in staff) person.displayName: person.id},
           control: FSelectControl.lifted(
-            value: filter.userId ?? _everyone,
-            onChange: (value) =>
-                ref.read(attendanceFilterProvider.notifier).update(
-                  filter.copyWith(
-                    userId: value,
-                    clearUser: value == null || value == _everyone,
-                  ),
-                ),
+            value: userId ?? _everyone,
+            onChange: (value) => ref
+                .read(attendanceStaffFilterProvider.notifier)
+                .set(value == null || value == _everyone ? null : value),
           ),
           label: const Text('Staff member'),
           hint: 'Everyone',
@@ -176,107 +146,212 @@ class _FilterCard extends ConsumerWidget {
   static const _everyone = '';
 }
 
-class _RangeSheet extends StatefulWidget {
-  const _RangeSheet({required this.initial});
+class _MonthCalendar extends StatelessWidget {
+  const _MonthCalendar({
+    required this.month,
+    required this.today,
+    required this.records,
+    required this.atCurrentMonth,
+    required this.onPrev,
+    required this.onNext,
+    required this.onSelect,
+    required this.onSelectOverflow,
+  });
 
-  final (DateTime, DateTime) initial;
+  final DateTime month;
+  final DateTime today;
+  final List<AttendanceRecord> records;
+  final bool atCurrentMonth;
+  final VoidCallback onPrev;
+  final VoidCallback? onNext;
+  final ValueChanged<DateTime> onSelect;
+  final ValueChanged<DateTime> onSelectOverflow;
 
-  @override
-  State<_RangeSheet> createState() => _RangeSheetState();
-}
-
-class _RangeSheetState extends State<_RangeSheet> {
-  late (DateTime, DateTime)? _range = widget.initial;
+  static const _weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
-    final now = DateTime.now();
+    final counts = <String, int>{};
+    for (final record in records) {
+      final key = dateKey(record.workDate);
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(gutter, 8, gutter, gutter),
+    final days = _gridDays(month);
+    final todayKey = dateKey(today);
+
+    return ContentCard(
       child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Pick a date range', style: theme.titleStyle),
-          const SizedBox(height: 4),
-          Text(
-            _range == null
-                ? 'Tap a start date, then an end date.'
-                : '${formatShortDay(_range!.$1)} to '
-                      '${formatShortDay(_range!.$2)}',
-            style: theme.mutedStyle,
+          Row(
+            children: [
+              FButton.icon(
+                variant: FButtonVariant.outline,
+                size: FButtonSizeVariant.sm,
+                semanticsLabel: 'Previous month',
+                onPress: onPrev,
+                child: const Icon(FLucideIcons.chevronLeft),
+              ),
+              Expanded(
+                child: Text(formatMonthYear(month), textAlign: TextAlign.center, style: theme.titleStyle),
+              ),
+              FButton.icon(
+                variant: FButtonVariant.outline,
+                size: FButtonSizeVariant.sm,
+                semanticsLabel: 'Next month',
+                onPress: onNext,
+                child: const Icon(FLucideIcons.chevronRight),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
-          Flexible(
-            child: SingleChildScrollView(
-              child: FCalendar.grid(
-                control: FGridCalendarControl(
-                  start: DateTime(2024),
-                  end: now.add(const Duration(days: 1)),
+          Row(
+            children: [
+              for (var i = 0; i < _weekdays.length; i++)
+                Expanded(
+                  child: Text(
+                    _weekdays[i],
+                    textAlign: TextAlign.center,
+                    style: theme.captionStyle.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: i == 0 ? theme.colors.destructive : theme.colors.mutedForeground,
+                    ),
+                  ),
                 ),
-                selectionControl: FDateSelectionControl.liftedRange(
-                  value: _range,
-                  onChange: (value) => setState(() => _range = value),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: gutter),
-          FButton(
-            onPress: _range == null
-                ? null
-                : () => Navigator.of(context).pop(_range),
-            child: const ButtonLabel('Apply'),
+            ],
           ),
           const SizedBox(height: 8),
-          FButton(
-            variant: FButtonVariant.outline,
-            onPress: () => Navigator.of(context).pop(),
-            child: const ButtonLabel('Cancel'),
-          ),
+          for (var week = 0; week < 6; week++) ...[
+            if (week > 0) const SizedBox(height: 4),
+            Row(
+              children: [
+                for (var dow = 0; dow < 7; dow++)
+                  Expanded(
+                    child: _DayCell(
+                      day: days[week * 7 + dow],
+                      month: month,
+                      todayKey: todayKey,
+                      count: counts[dateKey(days[week * 7 + dow])] ?? 0,
+                      onSelect: onSelect,
+                      onSelectOverflow: onSelectOverflow,
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
+
+  /// Six Sunday-first weeks covering [month], including greyed overflow days
+  /// from the months on either side so the grid stays a stable height.
+  static List<DateTime> _gridDays(DateTime month) {
+    final first = DateTime(month.year, month.month, 1);
+    final start = first.subtract(Duration(days: first.weekday % 7));
+    return [for (var i = 0; i < 42; i++) DateTime(start.year, start.month, start.day + i)];
+  }
 }
 
-class _Results extends ConsumerWidget {
-  const _Results({required this.rows});
+class _DayCell extends StatelessWidget {
+  const _DayCell({
+    required this.day,
+    required this.month,
+    required this.todayKey,
+    required this.count,
+    required this.onSelect,
+    required this.onSelectOverflow,
+  });
 
-  final List<AttendanceRecord> rows;
+  final DateTime day;
+  final DateTime month;
+  final String todayKey;
+  final int count;
+  final ValueChanged<DateTime> onSelect;
+  final ValueChanged<DateTime> onSelectOverflow;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    if (rows.isEmpty) {
-      return const FCard(
-        child: EmptyState(
-          icon: FLucideIcons.search,
-          title: 'No attendance in this range',
-          message: 'Try widening the dates or clearing the staff filter.',
-        ),
-      );
-    }
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    final inMonth = day.month == month.month && day.year == month.year;
+    final isToday = dateKey(day) == todayKey;
+    final isSunday = day.weekday == DateTime.sunday;
+    final dateColor = isSunday
+        ? (inMonth ? theme.colors.destructive : theme.colors.disable(theme.colors.destructive))
+        : (inMonth ? theme.colors.foreground : theme.colors.mutedForeground);
 
-    final worked = rows.fold(
-      Duration.zero,
-      (sum, r) => sum + (r.workedDuration ?? Duration.zero),
+    final dateNumber = Text(
+      '${day.day}',
+      style: theme.bodyStyle.copyWith(fontWeight: FontWeight.w700, fontSize: 16, height: 1, color: dateColor),
     );
 
-    return FTileGroup(
-      label: Text(
-        '${rows.length} record${rows.length == 1 ? '' : 's'}',
-      ),
-      description: Text('Total recorded time: ${formatDuration(worked)}'),
-      children: [
-        for (final row in rows)
-          AttendanceRowTile(
-            record: row,
-            showDate: true,
-            onReviewed: () => ref.invalidate(filteredAttendanceProvider),
+    return Semantics(
+      button: true,
+      label: _label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: inMonth ? () => onSelect(day) : () => onSelectOverflow(day),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+          child: Column(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                alignment: Alignment.center,
+                decoration: isToday && inMonth
+                    ? BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: theme.colors.foreground, width: 1.5),
+                      )
+                    : null,
+                child: dateNumber,
+              ),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 24,
+                child: inMonth && count > 0
+                    ? FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: theme.colors.foreground,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(6, 3, 6, 3),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '$count',
+                                  style: theme.bodyStyle.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 18,
+                                    height: 1,
+                                    color: theme.colors.background,
+                                  ),
+                                ),
+                                const SizedBox(width: 3),
+                                Icon(FLucideIcons.clock, size: 18, color: theme.colors.background),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
+            ],
           ),
-      ],
+        ),
+      ),
     );
+  }
+
+  String get _label {
+    final stamp = formatDay(day);
+    if (count == 0) return stamp;
+    return '$stamp, $count clock-in${count == 1 ? '' : 's'}';
   }
 }
