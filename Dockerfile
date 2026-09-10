@@ -35,7 +35,12 @@ COPY . .
 # cannot see, so shaking them would strip glyphs the app still draws.
 # --pwa-strategy=none stops Flutter generating an offline-first worker, which
 # would pin phones to a stale bundle after the next deploy.
-RUN flutter build web --release --no-tree-shake-icons --pwa-strategy=none
+RUN flutter build web --release --no-tree-shake-icons --pwa-strategy=none \
+  && BUILD_ID="$(md5sum build/web/main.dart.js | cut -c1-12)" \
+  && sed -i "s/BUILD_ID/${BUILD_ID}/g" build/web/index.html \
+  && sed -i "s/main\\.dart\\.js/main.dart.js?v=${BUILD_ID}/g" \
+       build/web/flutter_bootstrap.js \
+  && printf '%s\n' "$BUILD_ID" > build/web/build_id.txt
 
 FROM nginx:alpine
 

@@ -97,21 +97,52 @@
   -->
   <script>
     (function () {
+      // Old builds used /#/admin/attendance. After a deploy, a sticky tab can
+      // end up as /admin/attendance#/admin/attendance. Collapse that to a
+      // clean path before Flutter boots, otherwise the hash wins.
+      var hash = location.hash || '';
+      if (hash.indexOf('#/') === 0) {
+        var hashPath = hash.slice(1);
+        var q = hashPath.indexOf('?');
+        var path = q === -1 ? hashPath : hashPath.slice(0, q);
+        if (path) {
+          history.replaceState(
+            null,
+            '',
+            path + (location.search || ''),
+          );
+        }
+      }
+
       // Drop any leftover Flutter PWA worker. Closing a tab does not unregister
       // it, and it would keep serving the previous bundle after a deploy.
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function (regs) {
-          for (var i = 0; i < regs.length; i++) {
-            regs[i].unregister();
-          }
-        });
-      }
-      if (window.caches) {
-        caches.keys().then(function (keys) {
+      function clearCaches() {
+        if (!window.caches) return Promise.resolve();
+        return caches.keys().then(function (keys) {
           return Promise.all(keys.map(function (key) {
             return caches.delete(key);
           }));
         });
+      }
+
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          if (!regs.length) return clearCaches();
+          return Promise.all(regs.map(function (reg) {
+            return reg.unregister();
+          })).then(clearCaches).then(function () {
+            // One forced reload so the next paint cannot still be the SW's
+            // cached main.dart.js. sessionStorage stops a reload loop.
+            try {
+              if (!sessionStorage.getItem('clockin-sw-cleared')) {
+                sessionStorage.setItem('clockin-sw-cleared', '1');
+                location.reload();
+              }
+            } catch (_) {}
+          });
+        });
+      } else {
+        clearCaches();
       }
 
       function resetScroll() {
@@ -163,6 +194,6 @@
       patchViewportMeta();
     })();
   </script>
-  <script src="flutter_bootstrap.js" async></script>
+  <script src="flutter_bootstrap.js?v=BUILD_ID" async></script>
 </body>
 </html>
