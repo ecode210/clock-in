@@ -137,7 +137,7 @@ class _SelfieCaptureDialogState extends State<SelfieCaptureDialog> {
   Widget build(BuildContext context) {
     final theme = context.theme;
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader.nested(
         title: const Text('Take your photo'),

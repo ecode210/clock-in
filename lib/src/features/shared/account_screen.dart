@@ -23,7 +23,7 @@ class AccountScreen extends ConsumerWidget {
     // Shared by both areas, each reached from its own Settings hub.
     final inAdminArea = GoRouterState.of(context).uri.path.startsWith('/admin');
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader.nested(
         title: const Text('Account'),

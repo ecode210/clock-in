@@ -2,6 +2,8 @@ import 'package:flutter/widgets.dart';
 import 'package:forui/forui.dart';
 import 'package:go_router/go_router.dart';
 
+import 'widgets.dart';
+
 class NavDestinationSpec {
   const NavDestinationSpec({
     required this.path,
@@ -65,7 +67,7 @@ class AppNavShell extends StatelessWidget {
     }
 
     final selected = _selectedIndex;
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       footer: FBottomNavigationBar(
         index: selected,
@@ -91,7 +93,7 @@ class AppNavShell extends StatelessWidget {
     final theme = context.theme;
     final selected = _selectedIndex;
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       sidebar: FSidebar(
         header: Padding(

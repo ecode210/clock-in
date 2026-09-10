@@ -14,7 +14,7 @@ class StaffHistoryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final history = ref.watch(myHistoryProvider);
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader(
         title: const Text('History'),

@@ -256,7 +256,7 @@ class _StaffHomeScreenState extends ConsumerState<StaffHomeScreen> {
     final me = ref.watch(myProfileProvider).value;
     final firstName = me?.displayName.split(' ').first;
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader(
         title: Text(firstName == null ? 'Clock in' : 'Hi, $firstName'),

@@ -66,7 +66,7 @@ class AttendanceHistoryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final records = ref.watch(filteredAttendanceProvider);
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader(
         title: const Text('Attendance'),

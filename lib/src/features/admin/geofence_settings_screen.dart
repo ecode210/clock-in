@@ -25,7 +25,7 @@ class GeofenceSettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(orgSettingsProvider);
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader.nested(
         title: const Text('Clock-in zone'),

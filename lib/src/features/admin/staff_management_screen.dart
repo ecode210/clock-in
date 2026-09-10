@@ -8,6 +8,7 @@ import '../../core/app_error.dart';
 import '../../core/formatters.dart';
 import '../../models/profile.dart';
 import '../../models/staff_passkey.dart';
+import '../../services/passkey_service.dart';
 import '../../services/staff_repository.dart';
 import '../../services/supabase_providers.dart';
 import '../shared/widgets.dart';
@@ -19,7 +20,7 @@ class StaffManagementScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final staff = ref.watch(staffListProvider);
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader(
         title: const Text('Staff'),
@@ -609,7 +610,11 @@ class _PasskeyDialogState extends ConsumerState<_PasskeyDialog> {
     setState(() => _busy = true);
     try {
       await ref.read(staffRepositoryProvider).resetPasskey(widget.person.id);
+      // Staff sheet lists via RPC; Account (and clock-in prompts) list via
+      // Auth. Both read the same table, but live in separate providers, so a
+      // self-reset would leave Account showing the old credential otherwise.
       ref.invalidate(staffPasskeysProvider(widget.person.id));
+      ref.invalidate(myPasskeysProvider);
       if (mounted) showSnack(context, 'Passkey reset.');
     } catch (error) {
       if (mounted) showSnack(context, errorMessage(error), isError: true);

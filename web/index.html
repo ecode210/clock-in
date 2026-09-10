@@ -12,8 +12,31 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <!--
     No viewport tag here on purpose: the Flutter engine inserts its own at
-    startup, and a second one would compete with it.
+    startup, and a second one would compete with it. After load, the script
+    below adds interactive-widget=resizes-content to that injected tag so
+    Chrome Android resizes the layout viewport with the keyboard.
   -->
+
+  <style>
+    /* Lock the document so mobile browsers cannot pan away from the Flutter
+       view when the soft keyboard opens (that pan shows as a solid gap). */
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      overscroll-behavior: none;
+      position: fixed;
+      inset: 0;
+      background-color: #FFFFFF;
+    }
+    @media (prefers-color-scheme: dark) {
+      html, body {
+        background-color: #0A0A0A;
+      }
+    }
+  </style>
 
   <title>Clock-In: geofenced staff attendance</title>
   <meta name="description" content="Staff clock in and out only from inside your workplace geofence, verified by live selfie and passkey, while admins track hours and attendance in real time.">
@@ -72,6 +95,57 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script>
+    (function () {
+      function resetScroll() {
+        window.scrollTo(0, 0);
+        if (document.documentElement) document.documentElement.scrollTop = 0;
+        if (document.body) document.body.scrollTop = 0;
+      }
+
+      function patchViewportMeta() {
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) return;
+        var content = meta.getAttribute('content') || '';
+        if (content.indexOf('interactive-widget') === -1) {
+          meta.setAttribute(
+            'content',
+            content + ', interactive-widget=resizes-content'
+          );
+        }
+      }
+
+      window.addEventListener('scroll', resetScroll, { passive: true });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('scroll', resetScroll, {
+          passive: true,
+        });
+        window.visualViewport.addEventListener('resize', function () {
+          resetScroll();
+          patchViewportMeta();
+        }, { passive: true });
+      }
+      document.addEventListener('focusin', function () {
+        setTimeout(resetScroll, 50);
+        setTimeout(resetScroll, 300);
+      });
+      document.addEventListener('focusout', function () {
+        setTimeout(resetScroll, 50);
+        setTimeout(resetScroll, 300);
+      });
+
+      var head = document.head;
+      if (head && window.MutationObserver) {
+        new MutationObserver(patchViewportMeta).observe(head, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['content'],
+        });
+      }
+      patchViewportMeta();
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

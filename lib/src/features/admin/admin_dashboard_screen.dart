@@ -23,7 +23,7 @@ class AdminDashboardScreen extends ConsumerWidget {
     final staff = ref.watch(staffListProvider);
     final settings = ref.watch(orgSettingsProvider);
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader(
         title: const Text('Today'),

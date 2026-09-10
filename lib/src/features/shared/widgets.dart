@@ -441,6 +441,67 @@ class MetricRow extends StatelessWidget {
   );
 }
 
+/// Drop-in for [FScaffold] that consumes keyboard view insets the way
+/// Material's [Scaffold] does.
+///
+/// Forui applies `viewInsets.bottom` in layout but never calls
+/// [MediaQuery.removeViewInsets], so a nav shell scaffold plus a page
+/// scaffold each reserve the keyboard height. On a phone that stacks to
+/// nearly the full screen and leaves only a thin strip of UI at the top.
+class AppScaffold extends StatelessWidget {
+  const AppScaffold({
+    required this.child,
+    this.header,
+    this.sidebar,
+    this.footer,
+    this.childPad = true,
+    this.resizeToAvoidBottomInset = true,
+    super.key,
+  });
+
+  final Widget child;
+  final Widget? header;
+  final Widget? sidebar;
+  final Widget? footer;
+  final bool childPad;
+  final bool resizeToAvoidBottomInset;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = resizeToAvoidBottomInset
+        ? MediaQuery.viewInsetsOf(context).bottom
+        : 0.0;
+
+    final Widget? effectiveFooter;
+    if (bottomInset > 0) {
+      effectiveFooter = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ?footer,
+          SizedBox(height: bottomInset),
+        ],
+      );
+    } else {
+      effectiveFooter = footer;
+    }
+
+    return MediaQuery.removeViewInsets(
+      context: context,
+      removeBottom: resizeToAvoidBottomInset,
+      child: FScaffold(
+        childPad: childPad,
+        header: header,
+        sidebar: sidebar,
+        footer: effectiveFooter,
+        // Insets are applied above and stripped from [MediaQuery] so nested
+        // scaffolds cannot reserve the keyboard height a second time.
+        resizeToAvoidBottomInset: false,
+        child: child,
+      ),
+    );
+  }
+}
+
 /// The centred, single-column layout shared by the sign-in, first-admin and
 /// awaiting-approval screens, which all sit outside the tab shells.
 class AuthPage extends StatelessWidget {
@@ -462,7 +523,7 @@ class AuthPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       child: SafeArea(
         child: Center(

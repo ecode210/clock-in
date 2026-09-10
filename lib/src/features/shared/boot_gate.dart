@@ -41,7 +41,7 @@ class BootGate extends ConsumerWidget {
       );
     }
 
-    return FScaffold(
+    return AppScaffold(
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

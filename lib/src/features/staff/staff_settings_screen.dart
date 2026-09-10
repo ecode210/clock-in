@@ -19,7 +19,7 @@ class StaffSettingsScreen extends ConsumerWidget {
     final me = ref.watch(myProfileProvider).value;
     final isAdmin = ref.watch(appStageProvider) == AppStage.admin;
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader(title: const Text('Settings')),
       child: PagePadding(

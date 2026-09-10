@@ -20,7 +20,7 @@ class AdminSettingsScreen extends ConsumerWidget {
     final settings = ref.watch(orgSettingsProvider).value;
     final me = ref.watch(myProfileProvider).value;
 
-    return FScaffold(
+    return AppScaffold(
       childPad: false,
       header: FHeader(title: const Text('Settings')),
       child: PagePadding(
