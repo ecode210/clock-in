@@ -97,6 +97,23 @@
   -->
   <script>
     (function () {
+      // Drop any leftover Flutter PWA worker. Closing a tab does not unregister
+      // it, and it would keep serving the previous bundle after a deploy.
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          for (var i = 0; i < regs.length; i++) {
+            regs[i].unregister();
+          }
+        });
+      }
+      if (window.caches) {
+        caches.keys().then(function (keys) {
+          return Promise.all(keys.map(function (key) {
+            return caches.delete(key);
+          }));
+        });
+      }
+
       function resetScroll() {
         window.scrollTo(0, 0);
         if (document.documentElement) document.documentElement.scrollTop = 0;

@@ -33,11 +33,16 @@ COPY . .
 
 # Icons are looked up at runtime through FLucideIcons, which the tree shaker
 # cannot see, so shaking them would strip glyphs the app still draws.
-RUN flutter build web --release --no-tree-shake-icons
+# --pwa-strategy=none stops Flutter generating an offline-first worker, which
+# would pin phones to a stale bundle after the next deploy.
+RUN flutter build web --release --no-tree-shake-icons --pwa-strategy=none
 
 FROM nginx:alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/build/web /usr/share/nginx/html
+# Overwrites Flutter's empty worker with the uninstall script so phones that
+# already installed the old worker pick this up and drop their cache.
+COPY deploy/flutter_service_worker.js /usr/share/nginx/html/flutter_service_worker.js
 
 EXPOSE 80
