@@ -40,8 +40,29 @@ class PasskeyService {
     try {
       return await _auth.passkey.list();
     } catch (error) {
+      // A JWT can still look signed-in after Auth has deleted the session
+      // (for example after an admin password change). Drop the zombie session
+      // so the router sends the person back to sign in instead of spinning.
+      if (_isDeadSession(error)) {
+        try {
+          await _auth.signOut();
+        } catch (signOutError, stack) {
+          logFail('passkey.list_signout', signOutError, stack);
+        }
+      }
       throw _translate(error);
     }
+  }
+
+  bool _isDeadSession(Object error) {
+    if (error is! AuthException) return false;
+    final code = error.code ?? '';
+    final message = error.message.toLowerCase();
+    return code == 'session_not_found' ||
+        code == 'session_expired' ||
+        code == 'refresh_token_not_found' ||
+        message.contains('session_not_found') ||
+        message.contains('session from session_id');
   }
 
   Future<Passkey> register({String? friendlyName}) async {

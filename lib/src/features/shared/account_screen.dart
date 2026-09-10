@@ -65,8 +65,19 @@ class AccountScreen extends ConsumerWidget {
                 // outlined actions above it and is harder to hit by accident.
                 FButton(
                   variant: FButtonVariant.destructive,
-                  onPress: () =>
-                      ref.read(supabaseClientProvider).auth.signOut(),
+                  onPress: () async {
+                    final confirmed = await confirmAction(
+                      context,
+                      title: 'Sign out?',
+                      message:
+                          'You will need your email and password again to '
+                          'get back in.',
+                      confirmLabel: 'Sign out',
+                      destructive: true,
+                    );
+                    if (!confirmed || !context.mounted) return;
+                    await ref.read(supabaseClientProvider).auth.signOut();
+                  },
                   prefix: const Icon(FLucideIcons.logOut),
                   child: const ButtonLabel('Sign out'),
                 ),

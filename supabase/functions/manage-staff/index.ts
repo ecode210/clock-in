@@ -74,20 +74,43 @@ Deno.serve(async (req: Request) => {
 
   const action = String(body.action ?? "");
 
-  // Choosing your own password is the one thing a non-admin does here. It runs
-  // with the service role because must_change_password is only writable by it,
-  // and because clearing that flag has to be tied to the password actually
-  // changing rather than to the client saying it did.
+  // Choosing your own password is the one thing a non-admin does here. The
+  // password itself is updated with the caller's JWT so GoTrue keeps this
+  // session and only revokes others. Clearing must_change_password still needs
+  // the service role, and only runs after the password write succeeded.
   if (action === "change_own_password") {
     const password = String(body.password ?? "");
     if (password.length < 8) {
       return json({ error: "Passwords must be at least 8 characters." }, 400);
     }
 
-    const { error } = await admin.auth.admin.updateUserById(caller.user.id, {
-      password,
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const asCaller = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { autoRefreshToken: false, persistSession: false },
     });
+
+    const { error } = await asCaller.auth.updateUser({ password });
     if (error) {
+      const code = (error as { code?: string }).code ?? "";
+      if (code === "same_password") {
+        return json(
+          {
+            error:
+              "That is already your current password. Choose a different one.",
+          },
+          400,
+        );
+      }
+      if (code === "weak_password") {
+        return json(
+          {
+            error:
+              "That password is too easy to guess. Use at least 8 characters with a mix of letters and numbers.",
+          },
+          400,
+        );
+      }
       return json(
         { error: "That password could not be saved. Please try another one." },
         400,
@@ -223,7 +246,13 @@ Deno.serve(async (req: Request) => {
 
     const { error } = await admin.auth.admin.deleteUser(userId);
     if (error) {
-      return json({ error: error.message }, 400);
+      const raw = error.message ?? "";
+      const message = /permission denied|database error|unexpected failure/i
+          .test(raw)
+        ? "That account could not be deleted. Try again, and contact your "
+          + "administrator if it keeps happening."
+        : raw;
+      return json({ error: message }, 400);
     }
 
     return json({ user_id: userId, deleted: true });
