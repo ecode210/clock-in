@@ -25,6 +25,8 @@ class AttendanceRecord {
     required this.verifiedWithSelfie,
     required this.verifiedWithPasskey,
     this.reviewStatus = ReviewStatus.unreviewed,
+    this.locationId,
+    this.locationName,
     this.clockOutAt,
     this.clockOutDistanceMeters,
     this.clockInAccuracyMeters,
@@ -39,15 +41,17 @@ class AttendanceRecord {
       id: map['id'] as String,
       userId: map['user_id'] as String,
       workDate: DateTime.parse(map['work_date'] as String),
-      clockInAt: DateTime.parse(map['clock_in_at'] as String).toLocal(),
+      clockInAt: DateTime.parse(map['clock_in_at'] as String).toUtc(),
       clockInDistanceMeters:
           (map['clock_in_distance_meters'] as num?)?.toDouble() ?? 0,
       verifiedWithSelfie: (map['verified_with_selfie'] as bool?) ?? false,
       verifiedWithPasskey: (map['verified_with_passkey'] as bool?) ?? false,
       reviewStatus: ReviewStatus.fromName(map['review_status'] as String?),
+      locationId: map['location_id'] as String?,
+      locationName: map['location_name'] as String?,
       clockOutAt: map['clock_out_at'] == null
           ? null
-          : DateTime.parse(map['clock_out_at'] as String).toLocal(),
+          : DateTime.parse(map['clock_out_at'] as String).toUtc(),
       clockOutDistanceMeters: (map['clock_out_distance_meters'] as num?)
           ?.toDouble(),
       clockInAccuracyMeters: (map['clock_in_accuracy_meters'] as num?)
@@ -69,6 +73,11 @@ class AttendanceRecord {
   final bool verifiedWithSelfie;
   final bool verifiedWithPasskey;
   final ReviewStatus reviewStatus;
+  final String? locationId;
+
+  /// Snapshot of the site name at clock-in, so renames and archives stay
+  /// readable on history.
+  final String? locationName;
   final DateTime? clockOutAt;
   final double? clockOutDistanceMeters;
   final double? clockInAccuracyMeters;
@@ -81,4 +90,6 @@ class AttendanceRecord {
   bool get isOpen => clockOutAt == null;
 
   Duration? get workedDuration => clockOutAt?.difference(clockInAt);
+
+  String get displayLocationName => locationName ?? 'Unknown location';
 }

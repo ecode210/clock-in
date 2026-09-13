@@ -23,8 +23,10 @@ class BootGate extends ConsumerWidget {
     }
 
     final profile = ref.watch(myProfileProvider);
-    final settingsError = ref.watch(adminExistsProvider).error;
-    final error = profile.error ?? settingsError;
+    final adminExists = ref.watch(adminExistsProvider);
+    // A previous 401 from being signed out can linger on AsyncLoading while
+    // the signed-in refetch runs. Only fail once a fetch has actually settled.
+    final error = _settledError(profile) ?? _settledError(adminExists);
 
     if (error != null) {
       return _StartupFailure(error: error);
@@ -58,6 +60,11 @@ class BootGate extends ConsumerWidget {
       ),
     );
   }
+}
+
+Object? _settledError<T>(AsyncValue<T> value) {
+  if (value.isLoading || !value.hasError) return null;
+  return value.error;
 }
 
 class _StartupFailure extends ConsumerWidget {

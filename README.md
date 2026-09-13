@@ -1,9 +1,10 @@
 # Staff Clock-In
 
-A geofenced attendance app for a single work site. Staff clock in and out
+A geofenced attendance app for one or more work sites. Staff clock in and out
 from a browser, but only while they are physically inside a zone an
 administrator draws on a map. Two optional identity checks (a passkey and a
-live photo) can each be switched on or off from the admin UI.
+live photo) can each be switched on or off from the admin UI. Staff may visit
+more than one site in a day, and a shift may stay open overnight.
 
 Flutter web front end, Supabase (Postgres + Auth + Storage + Edge Functions)
 back end.
@@ -96,9 +97,9 @@ security and all writes go through RPCs.
 1. Sign up or sign in with the account that should be the administrator.
 2. Enter the setup code when prompted. Read it from the database if you need it:
    `select value from app_secrets where key = 'admin_setup_code';`
-3. **Clock-in zone**: drop the pin on your site (or press "Use my location"),
-   set the radius, pick the timezone that decides when the working day rolls
-   over, and save. Nobody can clock in until this exists.
+3. **Locations**: add each site (or press "Use my location"), set the radius,
+   pick the timezone that decides when the working day rolls over, and save.
+   Nobody can clock in until at least one active location exists.
 4. **Verification**: choose which identity checks to require.
 5. **Staff**: add accounts and hand out the temporary passwords.
 
@@ -115,7 +116,7 @@ lib/src/
     auth/          login, first-admin setup, awaiting-approval
     staff/         clock-in home, geofence status, selfie capture, history
     admin/         dashboard, attendance browser, staff management,
-                   geofence editor, verification settings
+                   locations editor, verification settings, export
     shared/        account page, boot gate, common widgets
 
 supabase/
@@ -127,7 +128,13 @@ supabase/
 
 Set the WebAuthn relying party to your real domain **before** staff enrol
 passkeys. Passkeys are cryptographically bound to the relying party ID, and
-changing it invalidates every one already registered.
+changing it invalidates every one already registered. Local config uses
+`rp_id = "localhost"` and `http://localhost:3001`; production must match the
+served HTTPS origin.
+
+Also raise the project's Data API **Max rows** to at least **6000** so Excel
+exports (up to 5000 visits) are not silently truncated by PostgREST's default
+1000-row cap. Client export and calendar guards still refuse oversized ranges.
 
 ```bash
 flutter build web --release

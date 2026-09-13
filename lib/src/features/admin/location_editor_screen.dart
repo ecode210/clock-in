@@ -8,85 +8,128 @@ import 'package:latlong2/latlong.dart';
 
 import '../../core/app_error.dart';
 import '../../core/formatters.dart';
-import '../../models/org_settings.dart';
+import '../../models/clock_location.dart';
 import '../../routing/router.dart';
 import '../../services/location_service.dart';
-import '../../services/settings_repository.dart';
-import '../../services/supabase_providers.dart';
+import '../../services/locations_repository.dart';
 import '../shared/widgets.dart';
-import 'timezone_picker.dart';
 
-/// Where the geofence is actually configured: drop a pin, drag the radius,
-/// save. Kept deliberately visual so it can be set up without knowing what a
-/// coordinate is.
-class GeofenceSettingsScreen extends ConsumerWidget {
-  const GeofenceSettingsScreen({super.key});
+/// Add or edit one clock-in site: pin, radius, and name.
+class LocationEditorScreen extends ConsumerWidget {
+  const LocationEditorScreen({this.locationId, super.key});
+
+  /// Null means create a new location.
+  final String? locationId;
+
+  bool get _isNew => locationId == null;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final settings = ref.watch(orgSettingsProvider);
+    if (_isNew) {
+      return _EditorScaffold(
+        title: 'New location',
+        child: _LocationEditor(initial: null),
+      );
+    }
 
+    final locations = ref.watch(locationsProvider);
     return AppScaffold(
       childPad: false,
       header: FHeader.nested(
-        title: const Text('Clock-in zone'),
+        title: const Text('Edit location'),
         prefixes: [
           FHeaderAction.back(
-            onPress: () => context.go(AppRoutes.adminSettings),
+            onPress: () => context.go(AppRoutes.adminLocations),
           ),
         ],
       ),
       child: AsyncSection(
-        value: settings,
-        onRetry: () => ref.invalidate(orgSettingsProvider),
-        // Keyed so the editor resets its draft if the row changes underneath.
-        builder: (data) => _GeofenceEditor(
-          key: ValueKey('${data.geofenceLat},${data.geofenceLng}'),
-          initial: data,
-        ),
+        value: locations,
+        onRetry: () => ref.invalidate(locationsProvider),
+        builder: (items) {
+          final match = items.where((l) => l.id == locationId).firstOrNull;
+          if (match == null) {
+            return PagePadding(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const FAlert(
+                    variant: FAlertVariant.destructive,
+                    title: Text('That location could not be found.'),
+                  ),
+                  const SizedBox(height: 12),
+                  FButton(
+                    onPress: () => context.go(AppRoutes.adminLocations),
+                    child: const ButtonLabel('Back to locations'),
+                  ),
+                ],
+              ),
+            );
+          }
+          return _LocationEditor(
+            key: ValueKey('${match.id}-${match.lat}-${match.lng}'),
+            initial: match,
+          );
+        },
       ),
     );
   }
 }
 
-class _GeofenceEditor extends ConsumerStatefulWidget {
-  const _GeofenceEditor({required this.initial, super.key});
+class _EditorScaffold extends StatelessWidget {
+  const _EditorScaffold({required this.title, required this.child});
 
-  final OrgSettings initial;
+  final String title;
+  final Widget child;
 
   @override
-  ConsumerState<_GeofenceEditor> createState() => _GeofenceEditorState();
+  Widget build(BuildContext context) {
+    return AppScaffold(
+      childPad: false,
+      header: FHeader.nested(
+        title: Text(title),
+        prefixes: [
+          FHeaderAction.back(
+            onPress: () => context.go(AppRoutes.adminLocations),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
 }
 
-class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
+class _LocationEditor extends ConsumerStatefulWidget {
+  const _LocationEditor({required this.initial, super.key});
+
+  final ClockLocation? initial;
+
+  @override
+  ConsumerState<_LocationEditor> createState() => _LocationEditorState();
+}
+
+class _LocationEditorState extends ConsumerState<_LocationEditor> {
   static const _fallbackCenter = LatLng(6.5244, 3.3792);
   static const _minRadius = 10.0;
   static const _maxRadius = 1000.0;
 
   final _mapController = MapController();
   late final FContinuousSliderController _radiusController;
-  late final TextEditingController _orgNameController;
-  late final TextEditingController _locationNameController;
+  late final TextEditingController _nameController;
 
   late LatLng? _center;
   late double _radius;
-  late String _timezone;
-  late int? _maxAccuracy;
-
   bool _saving = false;
   bool _locating = false;
+  bool _archiving = false;
 
   @override
   void initState() {
     super.initState();
-    _orgNameController = TextEditingController(text: widget.initial.orgName);
-    _locationNameController = TextEditingController(
-      text: widget.initial.locationName,
-    );
-    _center = widget.initial.center;
-    _radius = widget.initial.radiusMeters.toDouble();
-    _timezone = widget.initial.timezone;
-    _maxAccuracy = widget.initial.maxAccuracyMeters;
+    final initial = widget.initial;
+    _nameController = TextEditingController(text: initial?.name ?? '');
+    _center = initial?.center;
+    _radius = (initial?.radiusMeters ?? 100).toDouble();
     _radiusController = FContinuousSliderController(
       value: FSliderValue(max: _radiusFraction),
     );
@@ -95,31 +138,29 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
   @override
   void dispose() {
     _radiusController.dispose();
-    _orgNameController.dispose();
-    _locationNameController.dispose();
+    _nameController.dispose();
     _mapController.dispose();
     super.dispose();
   }
 
-  bool get _isDirty =>
-      _center != widget.initial.center ||
-      _radius != widget.initial.radiusMeters ||
-      _timezone != widget.initial.timezone ||
-      _maxAccuracy != widget.initial.maxAccuracyMeters ||
-      _orgNameController.text.trim() != widget.initial.orgName ||
-      _locationNameController.text.trim() != widget.initial.locationName;
+  bool get _isNew => widget.initial == null;
 
-  /// Forui's slider works in fractions of its track, so the radius is mapped
-  /// on and off a 0-1 scale here rather than in the widget tree.
+  bool get _isDirty {
+    final initial = widget.initial;
+    if (initial == null) {
+      return _center != null || _nameController.text.trim().isNotEmpty;
+    }
+    return _center != initial.center ||
+        _radius != initial.radiusMeters ||
+        _nameController.text.trim() != initial.name;
+  }
+
   double get _radiusFraction =>
       ((_radius - _minRadius) / (_maxRadius - _minRadius)).clamp(0.0, 1.0);
 
   double _radiusFromFraction(double fraction) =>
       _minRadius + fraction * (_maxRadius - _minRadius);
 
-  /// Forui re-attaches the slider while a [LayoutBuilder] is still laying out
-  /// the track. That notifies [onChange] during build, so the radius is applied
-  /// after the frame when we are not already building.
   void _onRadiusChange(FSliderValue value) {
     final next = _radiusFromFraction(value.max);
     if (next == _radius) return;
@@ -146,16 +187,15 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
     setState(() => _locating = true);
     try {
       final fix = await ref.read(locationServiceProvider).currentFix();
+      if (!mounted) return;
       final point = LatLng(fix.latitude, fix.longitude);
       setState(() => _center = point);
       _mapController.move(point, 17);
-      if (mounted) {
-        showSnack(
-          context,
-          'Pin moved to your position '
-          '(accurate to ${formatDistance(fix.accuracyMeters)}).',
-        );
-      }
+      showSnack(
+        context,
+        'Pin moved to your position '
+        '(accurate to ${formatDistance(fix.accuracyMeters)}).',
+      );
     } catch (error) {
       if (mounted) showSnack(context, errorMessage(error), isError: true);
     } finally {
@@ -165,6 +205,7 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
 
   Future<void> _save() async {
     final center = _center;
+    final name = _nameController.text.trim();
     if (center == null) {
       showSnack(
         context,
@@ -173,27 +214,39 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
       );
       return;
     }
+    if (name.isEmpty) {
+      showSnack(context, 'Give this location a name.', isError: true);
+      return;
+    }
 
     setState(() => _saving = true);
     try {
-      await ref.read(settingsRepositoryProvider).save(
-        widget.initial.copyWith(
-          orgName: _orgNameController.text.trim().isEmpty
-              ? widget.initial.orgName
-              : _orgNameController.text.trim(),
-          locationName: _locationNameController.text.trim().isEmpty
-              ? widget.initial.locationName
-              : _locationNameController.text.trim(),
-          timezone: _timezone,
+      final repo = ref.read(locationsRepositoryProvider);
+      if (_isNew) {
+        await repo.create(
+          name: name,
+          lat: center.latitude,
+          lng: center.longitude,
           radiusMeters: _radius.round(),
-          geofenceLat: center.latitude,
-          geofenceLng: center.longitude,
-          maxAccuracyMeters: _maxAccuracy,
-          clearMaxAccuracy: _maxAccuracy == null,
-        ),
+        );
+      } else {
+        await repo.update(
+          widget.initial!.copyWith(
+            name: name,
+            lat: center.latitude,
+            lng: center.longitude,
+            radiusMeters: _radius.round(),
+          ),
+        );
+      }
+      ref.invalidate(locationsProvider);
+      ref.invalidate(activeLocationsProvider);
+      if (!mounted) return;
+      showSnack(
+        context,
+        _isNew ? 'Location added.' : 'Location saved.',
       );
-      ref.invalidate(orgSettingsProvider);
-      if (mounted) showSnack(context, 'Clock-in zone saved.');
+      context.go(AppRoutes.adminLocations);
     } catch (error) {
       if (mounted) showSnack(context, errorMessage(error), isError: true);
     } finally {
@@ -201,10 +254,60 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
     }
   }
 
+  Future<void> _archive() async {
+    final initial = widget.initial;
+    if (initial == null) return;
+
+    final confirmed = await confirmAction(
+      context,
+      title: 'Archive ${initial.name}?',
+      message:
+          'Staff will no longer be able to clock in here. Past attendance '
+          'still shows this name.',
+      confirmLabel: 'Archive',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _archiving = true);
+    try {
+      await ref.read(locationsRepositoryProvider).archive(initial.id);
+      ref.invalidate(locationsProvider);
+      ref.invalidate(activeLocationsProvider);
+      if (!mounted) return;
+      showSnack(context, 'Location archived.');
+      context.go(AppRoutes.adminLocations);
+    } catch (error) {
+      if (mounted) showSnack(context, errorMessage(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _archiving = false);
+    }
+  }
+
+  Future<void> _restore() async {
+    final initial = widget.initial;
+    if (initial == null) return;
+
+    setState(() => _archiving = true);
+    try {
+      await ref.read(locationsRepositoryProvider).restore(initial.id);
+      ref.invalidate(locationsProvider);
+      ref.invalidate(activeLocationsProvider);
+      if (!mounted) return;
+      showSnack(context, 'Location restored.');
+      context.go(AppRoutes.adminLocations);
+    } catch (error) {
+      if (mounted) showSnack(context, errorMessage(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _archiving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
     final center = _center;
+    final initial = widget.initial;
 
     return PagePadding(
       maxWidth: 700,
@@ -214,7 +317,7 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
           SectionCard(
             title: 'Where staff may clock in',
             subtitle: center == null
-                ? 'Tap the map to drop the pin on your site, then set how far '
+                ? 'Tap the map to drop the pin on this site, then set how far '
                       'from it staff may clock in.'
                 : 'Tap the map to move the pin, or drag the slider to resize '
                       'the zone.',
@@ -350,22 +453,11 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
           ),
           const SizedBox(height: gutter),
           SectionCard(
-            title: 'Naming and timing',
-            subtitle:
-                'Shown to staff, and used to decide which day a clock-in '
-                'belongs to.',
+            title: 'Name',
             children: [
               FTextField(
                 control: FTextFieldControl.managed(
-                  controller: _orgNameController,
-                  onChange: (_) => setState(() {}),
-                ),
-                label: const Text('Organisation name'),
-              ),
-              const SizedBox(height: 12),
-              FTextField(
-                control: FTextFieldControl.managed(
-                  controller: _locationNameController,
+                  controller: _nameController,
                   onChange: (_) => setState(() {}),
                 ),
                 label: const Text('Site name'),
@@ -373,22 +465,7 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
                   'For example "Main Building" or "North Yard".',
                 ),
               ),
-              const SizedBox(height: 12),
-              TimezonePicker(
-                value: _timezone,
-                onChanged: (value) => setState(() => _timezone = value),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'The working day rolls over at midnight in this timezone.',
-                style: theme.captionStyle,
-              ),
             ],
-          ),
-          const SizedBox(height: gutter),
-          _AccuracyCard(
-            value: _maxAccuracy,
-            onChanged: (value) => setState(() => _maxAccuracy = value),
           ),
           const SizedBox(height: 20),
           FButton(
@@ -398,53 +475,36 @@ class _GeofenceEditorState extends ConsumerState<_GeofenceEditor> {
             child: ButtonLabel(
               _saving
                   ? 'Saving…'
+                  : _isNew
+                  ? 'Add location'
                   : _isDirty
-                  ? 'Save clock-in zone'
+                  ? 'Save location'
                   : 'Saved',
             ),
           ),
+          if (initial != null) ...[
+            const SizedBox(height: 10),
+            if (initial.isActive)
+              FButton(
+                variant: FButtonVariant.destructive,
+                onPress: _archiving ? null : _archive,
+                prefix: _archiving ? const FCircularProgress() : null,
+                child: ButtonLabel(
+                  _archiving ? 'Working…' : 'Archive location',
+                ),
+              )
+            else
+              FButton(
+                variant: FButtonVariant.outline,
+                onPress: _archiving ? null : _restore,
+                prefix: _archiving ? const FCircularProgress() : null,
+                child: ButtonLabel(
+                  _archiving ? 'Working…' : 'Restore location',
+                ),
+              ),
+          ],
         ],
       ),
-    );
-  }
-}
-
-/// Rejecting low-confidence GPS readings closes an easy loophole: a device
-/// reporting a 2 km error radius could otherwise "just about" be in the zone.
-class _AccuracyCard extends StatelessWidget {
-  const _AccuracyCard({required this.value, required this.onChanged});
-
-  final int? value;
-  final ValueChanged<int?> onChanged;
-
-  /// `FSelect` keys items by value, so "no limit" needs a value rather than
-  /// null. Zero is safe: a limit of zero metres would reject everything.
-  static const _noLimit = 0;
-  static const _options = <int>[_noLimit, 25, 50, 100, 250];
-
-  static String _label(int option) =>
-      option == _noLimit ? 'No limit' : 'Within $option m';
-
-  @override
-  Widget build(BuildContext context) {
-    return SectionCard(
-      title: 'GPS accuracy limit',
-      subtitle:
-          'Refuse clock-ins when the device is not confident about its '
-          'position.',
-      children: [
-        FSelect<int>(
-          items: {for (final option in _options) _label(option): option},
-          control: FSelectControl.lifted(
-            value: value ?? _noLimit,
-            onChange: (selected) =>
-                onChanged(selected == null || selected == _noLimit
-                    ? null
-                    : selected),
-          ),
-          label: const Text('Reject readings worse than'),
-        ),
-      ],
     );
   }
 }

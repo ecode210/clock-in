@@ -9,10 +9,12 @@ import '../../core/app_error.dart';
 import '../../core/dev_log.dart';
 import '../../core/formatters.dart';
 import '../../models/attendance_record.dart';
+import '../../models/clock_location.dart';
 import '../../models/org_settings.dart';
 import '../../routing/router.dart';
 import '../../services/attendance_repository.dart';
 import '../../services/location_service.dart';
+import '../../services/locations_repository.dart';
 import '../../services/passkey_service.dart';
 import '../../services/selfie_service.dart';
 import '../../services/supabase_providers.dart';
@@ -74,9 +76,13 @@ class _StaffHomeScreenState extends ConsumerState<StaffHomeScreen> {
     return _container.read(locationServiceProvider).currentFix();
   }
 
-  /// Runs the clock-in gauntlet in the order the checks make sense: prove where
-  /// you are, prove who you are, then prove you were there.
-  Future<void> _clockIn(OrgSettings settings) async {
+  /// Runs the clock-in gauntlet: prove where you are, pick the site, prove who
+  /// you are, then record the visit. Location is chosen before passkey/selfie
+  /// so a slow site picker cannot stale a fresh photo.
+  Future<void> _clockIn(
+    OrgSettings settings,
+    List<ClockLocation> locations,
+  ) async {
     final userId = _container.read(currentUserIdProvider);
     if (userId == null) return;
 
@@ -92,30 +98,48 @@ class _StaffHomeScreenState extends ConsumerState<StaffHomeScreen> {
             'outside, then try again.',
         code: ClockErrorCode.stepTimeout,
       );
-      final status = GeofenceStatus.from(settings, fix);
+      final inRange = InRangeLocations.evaluate(
+        locations: locations,
+        fix: fix,
+        maxAccuracyMeters: settings.maxAccuracyMeters,
+      );
 
-      if (!status.isInside) {
-        throw AppError(
-          'You are ${formatDistance(status.distanceMeters)} from '
-          '${settings.locationName}. Move within '
-          '${formatDistance(settings.radiusMeters.toDouble())} of it and try '
-          'again.',
+      if (!inRange.isInsideAny) {
+        throw const AppError(
+          'You are not inside any clock-in location. Move into a site zone '
+          'and try again.',
           code: ClockErrorCode.outsideGeofence,
         );
       }
-      if (!status.accuracyAcceptable) {
+      if (!inRange.accuracyAcceptable) {
         throw AppError(
           'Your location is only accurate to '
-          '${formatDistance(status.accuracyMeters)}. Move somewhere with a '
+          '${formatDistance(inRange.accuracyMeters)}. Move somewhere with a '
           'better signal and try again.',
           code: ClockErrorCode.poorAccuracy,
         );
       }
 
+      if (!mounted) {
+        throw const AppError(
+          'Clocking in was interrupted before you chose a location. Please '
+          'try again.',
+          code: ClockErrorCode.interrupted,
+        );
+      }
+
+      _setProgress('Choose a location…');
+      final chosen = inRange.matches.length == 1
+          ? inRange.matches.first.location
+          : await _pickLocation(inRange.matches);
+      if (chosen == null) {
+        throw const AppError(
+          'Pick which location you are at to finish clocking in.',
+          code: ClockErrorCode.missingLocation,
+        );
+      }
+
       if (settings.requirePasskey) {
-        // The prompt offers every passkey on the device. With none of your
-        // own, the only thing you could pick is a colleague's, so stop here
-        // rather than starting a ceremony that cannot legitimately succeed.
         if ((await _container.read(myPasskeysProvider.future)).isEmpty) {
           throw const AppError(
             'You need your own passkey before you can clock in. Add one from '
@@ -138,11 +162,7 @@ class _StaffHomeScreenState extends ConsumerState<StaffHomeScreen> {
 
       String? selfiePath;
       if (settings.requireSelfie) {
-        // Uncapped: the camera sheet is someone framing a photo, and it has
-        // its own cancel button.
         _setProgress('Waiting for your photo…');
-        // Only reachable if the session dropped, since navigation is locked.
-        // Fail rather than return, so the attempt never ends in silence.
         if (!mounted) {
           throw const AppError(
             'Clocking in was interrupted before your photo was taken. Please '
@@ -169,22 +189,40 @@ class _StaffHomeScreenState extends ConsumerState<StaffHomeScreen> {
       }
 
       _setProgress('Recording your clock-in…');
-      await withStepTimeout(
-        _container.read(attendanceRepositoryProvider).clockIn(
-          latitude: fix.latitude,
-          longitude: fix.longitude,
-          accuracyMeters: fix.accuracyMeters,
-          selfiePath: selfiePath,
-        ),
-        limit: _writeLimit,
-        message:
-            'We could not confirm your clock-in in time. Pull to refresh in a '
-            'moment to check whether it went through.',
-        code: ClockErrorCode.stepTimeout,
-      );
+      try {
+        await withStepTimeout(
+          _container.read(attendanceRepositoryProvider).clockIn(
+            latitude: fix.latitude,
+            longitude: fix.longitude,
+            locationId: chosen.id,
+            accuracyMeters: fix.accuracyMeters,
+            selfiePath: selfiePath,
+          ),
+          limit: _writeLimit,
+          message:
+              'We could not confirm your clock-in in time. Pull to refresh in a '
+              'moment to check whether it went through.',
+          code: ClockErrorCode.stepTimeout,
+        );
+      } on AppError catch (error) {
+        if (error.code != ClockErrorCode.stepTimeout) rethrow;
+        final open = await _reconcileOpenShift();
+        if (open != null) {
+          if (mounted) {
+            showSnack(
+              context,
+              'Clocked in at ${chosen.name}. Have a good shift.',
+            );
+          }
+          return;
+        }
+        rethrow;
+      }
 
       _refreshRecords();
-      if (mounted) showSnack(context, 'Clocked in. Have a good shift.');
+      if (mounted) {
+        showSnack(context, 'Clocked in at ${chosen.name}. Have a good shift.');
+      }
     } catch (error) {
       if (mounted) setState(() => _error = errorMessage(error));
     } finally {
@@ -192,7 +230,56 @@ class _StaffHomeScreenState extends ConsumerState<StaffHomeScreen> {
     }
   }
 
-  Future<void> _clockOut(OrgSettings settings) async {
+  Future<ClockLocation?> _pickLocation(
+    List<({ClockLocation location, GeofenceStatus status})> matches,
+  ) {
+    return showFSheet<ClockLocation>(
+      context: context,
+      side: FLayout.btt,
+      mainAxisMaxRatio: null,
+      useSafeArea: true,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(gutter, 8, gutter, gutter),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                'Which location are you at?',
+                style: sheetContext.theme.titleStyle,
+              ),
+            ),
+            FTileGroup(
+              children: [
+                for (final match in matches)
+                  FTile(
+                    prefix: const TileIcon(FLucideIcons.mapPin),
+                    title: Text(match.location.name),
+                    subtitle: Text(
+                      '${formatDistance(match.status.distanceMeters)} from '
+                      'the centre',
+                    ),
+                    onPress: () => Navigator.of(sheetContext).pop(
+                      match.location,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            FButton(
+              variant: FButtonVariant.outline,
+              onPress: () => Navigator.of(sheetContext).pop(),
+              child: const ButtonLabel('Cancel'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _clockOut() async {
     setState(() => _error = null);
     _setProgress('Checking your location…');
 
@@ -203,31 +290,41 @@ class _StaffHomeScreenState extends ConsumerState<StaffHomeScreen> {
           _locationFix(),
           limit: _locationLimit,
           message:
-              'Could not pin down where you are. Move near a window or step '
-              'outside, then try again.',
+              'Could not pin down where you are. You can still clock out '
+              'without it.',
           code: ClockErrorCode.stepTimeout,
         );
-      } catch (error) {
-        // Clocking out may be allowed without a fix; let the server decide.
-        if (!settings.allowClockOutOutsideGeofence) throw toAppError(error);
+      } catch (_) {
+        // Clock-out is allowed from anywhere; a missing fix is fine.
+        fix = null;
       }
 
       _setProgress('Recording your clock-out…');
-      await withStepTimeout(
-        _container.read(attendanceRepositoryProvider).clockOut(
-          latitude: fix?.latitude,
-          longitude: fix?.longitude,
-          accuracyMeters: fix?.accuracyMeters,
-        ),
-        limit: _writeLimit,
-        message:
-            'We could not confirm your clock-out in time. Pull to refresh in a '
-            'moment to check whether it went through.',
-        code: ClockErrorCode.stepTimeout,
-      );
+      try {
+        await withStepTimeout(
+          _container.read(attendanceRepositoryProvider).clockOut(
+            latitude: fix?.latitude,
+            longitude: fix?.longitude,
+            accuracyMeters: fix?.accuracyMeters,
+          ),
+          limit: _writeLimit,
+          message:
+              'We could not confirm your clock-out in time. Pull to refresh in a '
+              'moment to check whether it went through.',
+          code: ClockErrorCode.stepTimeout,
+        );
+      } on AppError catch (error) {
+        if (error.code != ClockErrorCode.stepTimeout) rethrow;
+        final open = await _reconcileOpenShift();
+        if (open == null) {
+          if (mounted) showSnack(context, 'Clocked out.');
+          return;
+        }
+        rethrow;
+      }
 
       _refreshRecords();
-      if (mounted) showSnack(context, 'Clocked out. See you tomorrow.');
+      if (mounted) showSnack(context, 'Clocked out.');
     } catch (error) {
       if (mounted) setState(() => _error = errorMessage(error));
     } finally {
@@ -235,24 +332,39 @@ class _StaffHomeScreenState extends ConsumerState<StaffHomeScreen> {
     }
   }
 
+  Future<AttendanceRecord?> _reconcileOpenShift() async {
+    _container
+      ..invalidate(myTodayRecordsProvider)
+      ..invalidate(myOpenRecordProvider);
+    try {
+      return await _container.read(myOpenRecordProvider.future);
+    } catch (_) {
+      return null;
+    }
+  }
+
   void _refreshRecords() {
     _container
-      ..invalidate(myTodayRecordProvider)
-      ..invalidate(myHistoryProvider);
+      ..invalidate(myTodayRecordsProvider)
+      ..invalidate(myOpenRecordProvider);
   }
 
   void _finish() => _container.read(clockBusyProvider.notifier).clear();
 
   void _refresh() {
     ref.invalidate(locationStreamProvider);
-    ref.invalidate(myTodayRecordProvider);
+    ref.invalidate(myTodayRecordsProvider);
+    ref.invalidate(myOpenRecordProvider);
     ref.invalidate(orgSettingsProvider);
+    ref.invalidate(activeLocationsProvider);
   }
 
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(orgSettingsProvider);
-    final today = ref.watch(myTodayRecordProvider);
+    final locations = ref.watch(activeLocationsProvider);
+    final open = ref.watch(myOpenRecordProvider);
+    final today = ref.watch(myTodayRecordsProvider);
     final me = ref.watch(myProfileProvider).value;
     final firstName = me?.displayName.split(' ').first;
 
@@ -272,38 +384,49 @@ class _StaffHomeScreenState extends ConsumerState<StaffHomeScreen> {
         value: settings,
         onRetry: () => ref.invalidate(orgSettingsProvider),
         builder: (settingsData) => AsyncSection(
-          value: today,
-          onRetry: () => ref.invalidate(myTodayRecordProvider),
-          builder: (record) => PagePadding(
-            child: !settingsData.isGeofenceConfigured
-                ? const _NotConfiguredNotice()
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // The action comes first: on a phone this is the only
-                      // thing most people open the app to do.
-                      _HeroPanel(
-                        record: record,
-                        settings: settingsData,
-                        progress: _progress,
-                        busy: _busy,
-                        onClockIn: () => _clockIn(settingsData),
-                        onClockOut: () => _clockOut(settingsData),
+          value: locations,
+          onRetry: () => ref.invalidate(activeLocationsProvider),
+          builder: (locationList) => AsyncSection(
+            value: open,
+            onRetry: () => ref.invalidate(myOpenRecordProvider),
+            builder: (openRecord) => AsyncSection(
+              value: today,
+              onRetry: () => ref.invalidate(myTodayRecordsProvider),
+              builder: (todayRecords) => PagePadding(
+                child: locationList.isEmpty
+                    ? const _NotConfiguredNotice()
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _HeroPanel(
+                            openRecord: openRecord,
+                            settings: settingsData,
+                            locations: locationList,
+                            progress: _progress,
+                            busy: _busy,
+                            onClockIn: () =>
+                                _clockIn(settingsData, locationList),
+                            onClockOut: _clockOut,
+                          ),
+                          if (_error != null) ...[
+                            const SizedBox(height: gutter),
+                            ErrorNotice(error: AppError(_error!)),
+                          ],
+                          const SizedBox(height: gutter),
+                          _LocationCard(
+                            settings: settingsData,
+                            locations: locationList,
+                          ),
+                          if (todayRecords.isNotEmpty) ...[
+                            const SizedBox(height: gutter),
+                            _TodayVisitsCard(records: todayRecords),
+                          ],
+                          const SizedBox(height: gutter),
+                          _RequirementsSection(settings: settingsData),
+                        ],
                       ),
-                      if (_error != null) ...[
-                        const SizedBox(height: gutter),
-                        ErrorNotice(error: AppError(_error!)),
-                      ],
-                      const SizedBox(height: gutter),
-                      _LocationCard(settings: settingsData),
-                      if (record != null) ...[
-                        const SizedBox(height: gutter),
-                        _ShiftCard(record: record),
-                      ],
-                      const SizedBox(height: gutter),
-                      _RequirementsSection(settings: settingsData),
-                    ],
-                  ),
+              ),
+            ),
           ),
         ),
       ),
@@ -320,25 +443,27 @@ class _NotConfiguredNotice extends StatelessWidget {
       icon: FLucideIcons.mapPinOff,
       title: 'Clock-in is not set up yet',
       message:
-          'An administrator still needs to mark your work location on the '
-          'map. You will be able to clock in once that is done.',
+          'An administrator still needs to add at least one work location. '
+          'You will be able to clock in once that is done.',
     ),
   );
 }
 
-/// The headline state of the day plus the one button that acts on it.
+/// The headline state plus the one button that acts on it.
 class _HeroPanel extends ConsumerWidget {
   const _HeroPanel({
-    required this.record,
+    required this.openRecord,
     required this.settings,
+    required this.locations,
     required this.progress,
     required this.busy,
     required this.onClockIn,
     required this.onClockOut,
   });
 
-  final AttendanceRecord? record;
+  final AttendanceRecord? openRecord;
   final OrgSettings settings;
+  final List<ClockLocation> locations;
   final String? progress;
   final bool busy;
   final VoidCallback onClockIn;
@@ -347,23 +472,21 @@ class _HeroPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = context.theme;
-    final done = record != null && !record!.isOpen;
-    final isClockOut = record != null && record!.isOpen;
+    final isClockOut = openRecord != null;
+    final timezone = settings.timezone;
+    final now = orgNow(timezone);
 
-    final fix = ref.watch(locationStreamProvider).value;
-    final status = fix == null ? null : GeofenceStatus.from(settings, fix);
+    final inRange = ref.watch(inRangeLocationsProvider).value;
+    final fixLoading = ref.watch(locationStreamProvider).isLoading;
 
-    // Clocking out may be permitted from anywhere, depending on settings.
-    final locationOk = isClockOut
-        ? settings.allowClockOutOutsideGeofence || (status?.canClockIn ?? false)
-        : (status?.canClockIn ?? false);
+    // Clock-out works from anywhere. Clock-in needs an in-range site.
+    final locationOk = isClockOut || (inRange?.canClockIn ?? false);
 
-    // With no passkey of their own, the only credential the prompt could offer
-    // is a colleague's, so there is nothing this person can legitimately prove.
+    final passkeys = ref.watch(myPasskeysProvider);
     final needsPasskey =
         !isClockOut &&
         settings.requirePasskey &&
-        (ref.watch(myPasskeysProvider).value?.isEmpty ?? false);
+        (passkeys.isLoading || (passkeys.value?.isEmpty ?? true));
 
     return ContentCard(
       child: Column(
@@ -372,15 +495,12 @@ class _HeroPanel extends ConsumerWidget {
           Row(
             children: [
               Expanded(
-                child: Text(formatDay(DateTime.now()), style: theme.mutedStyle),
+                child: Text(
+                  formatDay(now, timezone: timezone),
+                  style: theme.mutedStyle,
+                ),
               ),
-              if (done)
-                const StatusChip(
-                  label: 'Complete',
-                  icon: FLucideIcons.check,
-                  tone: ChipTone.neutral,
-                )
-              else if (isClockOut)
+              if (isClockOut)
                 const StatusChip(
                   label: 'On shift',
                   icon: FLucideIcons.clock,
@@ -389,52 +509,52 @@ class _HeroPanel extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 14),
-          if (done)
+          if (isClockOut)
+            _LiveElapsed(since: openRecord!.clockInAt)
+          else
             _HeroFigure(
-              label: 'Worked today',
-              value: formatDuration(record!.workedDuration),
-            )
-          else if (isClockOut)
-            _LiveElapsed(since: record!.clockInAt)
-          else
-            _HeroFigure(label: 'Right now', value: formatTime(DateTime.now())),
+              label: 'Right now',
+              value: formatTime(now, timezone: timezone),
+            ),
+          if (isClockOut && openRecord!.locationName != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'At ${openRecord!.displayLocationName}',
+              style: theme.mutedStyle,
+            ),
+          ],
           const SizedBox(height: 20),
-          if (done)
-            FAlert(
-              icon: const Icon(FLucideIcons.partyPopper),
-              title: const Text('Your attendance for today is complete.'),
-            )
-          else
-            SizedBox(
-              height: 60,
-              child: FButton(
-                size: FButtonSizeVariant.lg,
-                variant: isClockOut
-                    ? FButtonVariant.secondary
-                    : FButtonVariant.primary,
-                onPress: busy || !locationOk || needsPasskey
-                    ? null
-                    : (isClockOut ? onClockOut : onClockIn),
-                prefix: busy
-                    ? const FCircularProgress()
-                    : Icon(
-                        isClockOut ? FLucideIcons.logOut : FLucideIcons.logIn,
-                        size: 22,
-                      ),
-                child: ButtonLabel(
-                  progress ?? (isClockOut ? 'Clock out' : 'Clock in'),
-                ),
+          SizedBox(
+            height: 60,
+            child: FButton(
+              size: FButtonSizeVariant.lg,
+              variant: isClockOut
+                  ? FButtonVariant.secondary
+                  : FButtonVariant.primary,
+              onPress: busy || !locationOk || needsPasskey
+                  ? null
+                  : (isClockOut ? onClockOut : onClockIn),
+              prefix: busy
+                  ? const FCircularProgress()
+                  : Icon(
+                      isClockOut ? FLucideIcons.logOut : FLucideIcons.logIn,
+                      size: 22,
+                    ),
+              child: ButtonLabel(
+                progress ?? (isClockOut ? 'Clock out' : 'Clock in'),
               ),
             ),
-          if (!done && !busy && (!locationOk || needsPasskey)) ...[
+          ),
+          if (!busy && (!locationOk || needsPasskey)) ...[
             const SizedBox(height: 10),
             Text(
               needsPasskey
-                  ? 'Add your own passkey below before you can clock in.'
-                  : status == null
-                  ? 'Waiting for your location before you can '
-                        '${isClockOut ? 'clock out' : 'clock in'}.'
-                  : 'Move inside the clock-in zone to enable this button.',
+                  ? passkeys.isLoading
+                        ? 'Checking your passkey…'
+                        : 'Add your own passkey below before you can clock in.'
+                  : fixLoading || inRange == null
+                  ? 'Waiting for your location before you can clock in.'
+                  : 'Move inside a clock-in location to enable this button.',
               textAlign: TextAlign.center,
               style: theme.captionStyle,
             ),
@@ -497,26 +617,27 @@ class _LiveElapsedState extends State<_LiveElapsed> {
   @override
   Widget build(BuildContext context) => _HeroFigure(
     label: 'On shift for',
-    value: formatElapsed(DateTime.now().difference(widget.since)),
+    value: formatElapsed(DateTime.now().toUtc().difference(widget.since.toUtc())),
   );
 }
 
-/// Live distance readout, refreshed from the browser's geolocation watcher.
+/// Live distance readout against every active location.
 class _LocationCard extends ConsumerWidget {
-  const _LocationCard({required this.settings});
+  const _LocationCard({required this.settings, required this.locations});
 
   final OrgSettings settings;
+  final List<ClockLocation> locations;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = context.theme;
-    final fix = ref.watch(locationStreamProvider);
+    final inRangeAsync = ref.watch(inRangeLocationsProvider);
 
     return SectionCard(
       title: 'Your location',
       subtitle:
-          '${settings.locationName} · '
-          '${formatDistance(settings.radiusMeters.toDouble())} radius',
+          '${locations.length} '
+          '${locations.length == 1 ? 'location' : 'locations'}',
       trailing: FButton.icon(
         variant: FButtonVariant.primary,
         size: FButtonSizeVariant.sm,
@@ -525,8 +646,8 @@ class _LocationCard extends ConsumerWidget {
         child: const Icon(FLucideIcons.locateFixed),
       ),
       children: [
-        fix.when(
-          skipLoadingOnRefresh: false,
+        inRangeAsync.when(
+          skipLoadingOnRefresh: true,
           loading: () => Row(
             children: [
               const FCircularProgress(),
@@ -538,8 +659,16 @@ class _LocationCard extends ConsumerWidget {
             error: error,
             onRetry: () => ref.invalidate(locationStreamProvider),
           ),
-          data: (data) {
-            final status = GeofenceStatus.from(settings, data);
+          data: (inRange) {
+            if (inRange == null) {
+              return Row(
+                children: [
+                  const FCircularProgress(),
+                  const SizedBox(width: 12),
+                  Text('Finding your location…', style: theme.bodyStyle),
+                ],
+              );
+            }
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -548,24 +677,28 @@ class _LocationCard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Icon(
-                      status.isInside
+                      inRange.isInsideAny
                           ? FLucideIcons.circleCheck
                           : FLucideIcons.circleAlert,
                       size: 18,
-                      color: status.isInside
+                      color: inRange.isInsideAny
                           ? theme.colors.primary
                           : theme.colors.error,
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        status.isInside
-                            ? 'You are inside the clock-in zone, '
-                                  '${formatDistance(status.distanceMeters)} '
-                                  'from the centre.'
-                            : 'You are '
-                                  '${formatDistance(status.metersOutside)} '
-                                  'outside the zone.',
+                        inRange.isInsideAny
+                            ? inRange.matches.length == 1
+                                  ? 'You are inside '
+                                        '${inRange.matches.first.location.name}, '
+                                        '${formatDistance(inRange.matches.first.status.distanceMeters)} '
+                                        'from the centre.'
+                                  : 'You are inside '
+                                        '${inRange.matches.length} locations. '
+                                        'You will choose which one when you '
+                                        'clock in.'
+                            : 'You are not inside any clock-in location.',
                         style: theme.bodyStyle,
                       ),
                     ),
@@ -577,25 +710,33 @@ class _LocationCard extends ConsumerWidget {
                   runSpacing: 8,
                   children: [
                     StatusChip(
-                      label: status.isInside ? 'In zone' : 'Out of zone',
-                      icon: status.isInside
+                      label: inRange.isInsideAny
+                          ? 'In zone'
+                          : 'Out of zone',
+                      icon: inRange.isInsideAny
                           ? FLucideIcons.mapPin
                           : FLucideIcons.mapPinOff,
-                      tone: status.canClockIn
+                      tone: inRange.canClockIn
                           ? ChipTone.positive
                           : ChipTone.negative,
                     ),
                     StatusChip(
                       label:
-                          'Accuracy ${formatDistance(status.accuracyMeters)}',
+                          'Accuracy ${formatDistance(inRange.accuracyMeters)}',
                       icon: FLucideIcons.crosshair,
-                      tone: status.accuracyAcceptable
+                      tone: inRange.accuracyAcceptable
                           ? ChipTone.neutral
                           : ChipTone.warning,
                     ),
+                    for (final match in inRange.matches)
+                      StatusChip(
+                        label: match.location.name,
+                        icon: FLucideIcons.mapPin,
+                        tone: ChipTone.positive,
+                      ),
                   ],
                 ),
-                if (!status.accuracyAcceptable) ...[
+                if (!inRange.accuracyAcceptable) ...[
                   const SizedBox(height: 12),
                   Text(
                     'Your device is not confident about this position. Move '
@@ -612,40 +753,34 @@ class _LocationCard extends ConsumerWidget {
   }
 }
 
-/// Times and verification evidence for today's record.
-class _ShiftCard extends StatelessWidget {
-  const _ShiftCard({required this.record});
+/// Every visit today, newest first.
+class _TodayVisitsCard extends ConsumerWidget {
+  const _TodayVisitsCard({required this.records});
 
-  final AttendanceRecord record;
+  final List<AttendanceRecord> records;
 
   @override
-  Widget build(BuildContext context) => FTileGroup(
-    label: const Text("Today's shift"),
-    children: [
-      FTile(
-        prefix: const TileIcon(FLucideIcons.logIn),
-        title: const Text('Clocked in'),
-        details: Text(formatTime(record.clockInAt)),
-      ),
-      FTile(
-        prefix: const TileIcon(FLucideIcons.logOut),
-        title: const Text('Clocked out'),
-        details: Text(formatTime(record.clockOutAt)),
-      ),
-      if (record.verifiedWithPasskey)
-        FTile(
-          prefix: const TileIcon(FLucideIcons.fingerprint),
-          title: const Text('Passkey'),
-          details: const Text('Verified'),
-        ),
-      if (record.verifiedWithSelfie)
-        FTile(
-          prefix: const TileIcon(FLucideIcons.camera),
-          title: const Text('Live photo'),
-          details: const Text('Captured'),
-        ),
-    ],
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final timezone = ref.watch(orgSettingsProvider).value?.timezone;
+    return FTileGroup(
+      label: const Text("Today's visits"),
+      children: [
+        for (final record in records)
+          FTile(
+            prefix: TileIcon(
+              record.isOpen ? FLucideIcons.hourglass : FLucideIcons.circleCheck,
+            ),
+            title: Text(record.displayLocationName),
+            subtitle: Text(
+              '${formatTime(record.clockInAt, timezone: timezone)} → '
+              '${formatTime(record.clockOutAt, timezone: timezone)}'
+              '${record.isOpen ? '' : ' · ${formatDuration(record.workedDuration)}'}',
+            ),
+            details: Text(record.isOpen ? 'On shift' : 'Done'),
+          ),
+      ],
+    );
+  }
 }
 
 /// Tells staff up front which checks they will be asked to pass, and nudges

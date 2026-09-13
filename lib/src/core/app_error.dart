@@ -16,11 +16,15 @@ class ClockErrorCode {
   static const passkeyRequired = 'passkey_required';
   static const poorAccuracy = 'poor_accuracy';
   static const alreadyClockedIn = 'already_clocked_in';
+  static const alreadyOnShift = 'already_on_shift';
   static const alreadyClockedOut = 'already_clocked_out';
   static const notClockedIn = 'not_clocked_in';
+  static const locationInactive = 'location_inactive';
   static const accountInactive = 'account_inactive';
   static const adminAlreadyExists = 'admin_already_exists';
   static const missingLocation = 'missing_location';
+  static const missingAccuracy = 'missing_accuracy';
+  static const mustChangePassword = 'must_change_password';
   static const locationMocked = 'location_mocked';
   static const stepTimeout = 'step_timeout';
   static const interrupted = 'interrupted';

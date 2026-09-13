@@ -1,18 +1,21 @@
 ---
-description: Never write or run automated tests in this project
+description: Never write, keep, or run automated tests in this project
 alwaysApply: true
 ---
 
 # No Tests
 
-Do not write automated tests, and do not run them. This applies to unit, widget,
-integration, and golden tests alike.
+This project has no test suite. Do not create one.
 
-- Never create or edit files under `test/`, `integration_test/`, or any
-  `*_test.dart`.
+- Never create or keep a `test/` or `integration_test/` directory.
+- Never create or edit any `*_test.dart` file.
+- Never add `flutter_test`, `integration_test`, mockito, or similar test-only
+  packages to `pubspec.yaml`.
 - Never run `flutter test`, `dart test`, or any command whose purpose is to
   execute a test suite.
 - Never add a test as "verification" of a change, and never suggest adding one.
+- If you find leftover test files or a `test/` folder, delete them rather than
+  fixing them.
 - This holds for delegated work too: any subagent or background task you launch
   must be told not to write or run tests.
 

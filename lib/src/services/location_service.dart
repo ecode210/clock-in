@@ -126,12 +126,14 @@ class LocationService {
   }
 
   /// Continuous updates for the live distance readout on the clock-in screen.
+  /// Uses high (not best) accuracy and a short distance filter so the UI does
+  /// not thrash while the person stands still.
   Stream<LocationFix> watch() async* {
     await _ensurePermission();
     yield* Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.best,
-        distanceFilter: 5,
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 8,
       ),
     ).map((position) {
       final fix = LocationFix.fromPosition(position);

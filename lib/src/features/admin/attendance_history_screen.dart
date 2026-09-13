@@ -4,7 +4,6 @@ import 'package:forui/forui.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/formatters.dart';
-import '../../models/attendance_record.dart';
 import '../../routing/router.dart';
 import '../../services/attendance_repository.dart';
 import '../../services/staff_repository.dart';
@@ -18,16 +17,18 @@ class AttendanceStaffFilter extends Notifier<String?> {
   void set(String? userId) => state = userId;
 }
 
-final attendanceStaffFilterProvider = NotifierProvider<AttendanceStaffFilter, String?>(AttendanceStaffFilter.new);
+final attendanceStaffFilterProvider =
+    NotifierProvider<AttendanceStaffFilter, String?>(AttendanceStaffFilter.new);
 
-/// One organisation month of attendance, keyed by year, month, and optional
+/// Visit counts for one organisation month, keyed by year, month, and optional
 /// staff id. Changing month is a new page of data rather than a date range.
-final monthAttendanceProvider = FutureProvider.family<List<AttendanceRecord>, (int, int, String?)>((ref, key) {
-  final (year, month, userId) = key;
-  final from = DateTime(year, month, 1);
-  final to = DateTime(year, month + 1, 0);
-  return ref.watch(attendanceRepositoryProvider).allRecords(from: from, to: to, userId: userId, limit: 2000);
-});
+final monthVisitCountsProvider =
+    FutureProvider.family<Map<String, int>, (int, int, String?)>((ref, key) {
+      final (year, month, userId) = key;
+      return ref
+          .watch(attendanceRepositoryProvider)
+          .monthVisitCounts(year: year, month: month, userId: userId);
+    });
 
 class AttendanceHistoryScreen extends ConsumerWidget {
   const AttendanceHistoryScreen({super.key});
@@ -44,7 +45,7 @@ class AttendanceHistoryScreen extends ConsumerWidget {
           HeaderAction(
             icon: FLucideIcons.refreshCw,
             semanticsLabel: 'Refresh',
-            onPress: () => ref.invalidate(monthAttendanceProvider),
+            onPress: () => ref.invalidate(monthVisitCountsProvider),
           ),
         ],
       ),
@@ -69,7 +70,8 @@ class _MonthBody extends ConsumerStatefulWidget {
 class _MonthBodyState extends ConsumerState<_MonthBody> {
   late DateTime _month = DateTime(widget.today.year, widget.today.month);
 
-  bool get _atCurrentMonth => _month.year == widget.today.year && _month.month == widget.today.month;
+  bool get _atCurrentMonth =>
+      _month.year == widget.today.year && _month.month == widget.today.month;
 
   void _shiftMonth(int delta) {
     final next = DateTime(_month.year, _month.month + delta);
@@ -81,28 +83,36 @@ class _MonthBodyState extends ConsumerState<_MonthBody> {
   @override
   Widget build(BuildContext context) {
     final userId = ref.watch(attendanceStaffFilterProvider);
-    final records = ref.watch(monthAttendanceProvider((_month.year, _month.month, userId)));
+    final counts = ref.watch(
+      monthVisitCountsProvider((_month.year, _month.month, userId)),
+    );
 
     return PagePadding(
       maxWidth: 700,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _StaffFilter(),
+          _StaffFilter(month: _month, today: widget.today),
           const SizedBox(height: gutter),
           AsyncSection(
-            value: records,
-            onRetry: () => ref.invalidate(monthAttendanceProvider((_month.year, _month.month, userId))),
-            builder: (rows) => _MonthCalendar(
+            value: counts,
+            onRetry: () => ref.invalidate(
+              monthVisitCountsProvider((_month.year, _month.month, userId)),
+            ),
+            builder: (dayCounts) => _MonthCalendar(
               month: _month,
               today: widget.today,
-              records: rows,
+              counts: dayCounts,
               atCurrentMonth: _atCurrentMonth,
               onPrev: () => _shiftMonth(-1),
               onNext: _atCurrentMonth ? null : () => _shiftMonth(1),
-              onSelect: (day) => context.go(AppRoutes.adminAttendanceDay(dateKey(day))),
+              onSelect: (day) =>
+                  context.go(AppRoutes.adminAttendanceDay(dateKey(day))),
               onSelectOverflow: (day) {
-                final current = DateTime(widget.today.year, widget.today.month);
+                final current = DateTime(
+                  widget.today.year,
+                  widget.today.month,
+                );
                 final target = DateTime(day.year, day.month);
                 if (target.isAfter(current)) return;
                 setState(() => _month = target);
@@ -116,18 +126,38 @@ class _MonthBodyState extends ConsumerState<_MonthBody> {
 }
 
 class _StaffFilter extends ConsumerWidget {
-  const _StaffFilter();
+  const _StaffFilter({required this.month, required this.today});
+
+  final DateTime month;
+  final DateTime today;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final userId = ref.watch(attendanceStaffFilterProvider);
     final staff = ref.watch(staffListProvider).value ?? const [];
 
+    final from = DateTime(month.year, month.month, 1);
+    final monthEnd = DateTime(month.year, month.month + 1, 0);
+    final to = monthEnd.isAfter(today) ? today : monthEnd;
+
     return SectionCard(
       title: 'Filter',
+      trailing: FButton(
+        variant: FButtonVariant.primary,
+        size: FButtonSizeVariant.sm,
+        prefix: const Icon(FLucideIcons.download),
+        onPress: () => context.go(
+          '${AppRoutes.adminAttendanceExport}'
+          '?from=${dateKey(from)}&to=${dateKey(to)}',
+        ),
+        child: const Text('Export'),
+      ),
       children: [
         FSelect<String>(
-          items: {'Everyone': _everyone, for (final person in staff) person.displayName: person.id},
+          items: {
+            'Everyone': _everyone,
+            for (final person in staff) person.displayName: person.id,
+          },
           control: FSelectControl.lifted(
             value: userId ?? _everyone,
             onChange: (value) => ref
@@ -150,7 +180,7 @@ class _MonthCalendar extends StatelessWidget {
   const _MonthCalendar({
     required this.month,
     required this.today,
-    required this.records,
+    required this.counts,
     required this.atCurrentMonth,
     required this.onPrev,
     required this.onNext,
@@ -160,7 +190,7 @@ class _MonthCalendar extends StatelessWidget {
 
   final DateTime month;
   final DateTime today;
-  final List<AttendanceRecord> records;
+  final Map<String, int> counts;
   final bool atCurrentMonth;
   final VoidCallback onPrev;
   final VoidCallback? onNext;
@@ -172,12 +202,6 @@ class _MonthCalendar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
-    final counts = <String, int>{};
-    for (final record in records) {
-      final key = dateKey(record.workDate);
-      counts[key] = (counts[key] ?? 0) + 1;
-    }
-
     final days = _gridDays(month);
     final todayKey = dateKey(today);
 
@@ -194,7 +218,11 @@ class _MonthCalendar extends StatelessWidget {
                 child: const Icon(FLucideIcons.chevronLeft),
               ),
               Expanded(
-                child: Text(formatMonthYear(month), textAlign: TextAlign.center, style: theme.titleStyle),
+                child: Text(
+                  formatMonthYear(month),
+                  textAlign: TextAlign.center,
+                  style: theme.titleStyle,
+                ),
               ),
               FButton.icon(
                 variant: FButtonVariant.outline,
@@ -215,7 +243,9 @@ class _MonthCalendar extends StatelessWidget {
                     textAlign: TextAlign.center,
                     style: theme.captionStyle.copyWith(
                       fontWeight: FontWeight.w600,
-                      color: i == 0 ? theme.colors.destructive : theme.colors.mutedForeground,
+                      color: i == 0
+                          ? theme.colors.destructive
+                          : theme.colors.mutedForeground,
                     ),
                   ),
                 ),
@@ -250,7 +280,10 @@ class _MonthCalendar extends StatelessWidget {
   static List<DateTime> _gridDays(DateTime month) {
     final first = DateTime(month.year, month.month, 1);
     final start = first.subtract(Duration(days: first.weekday % 7));
-    return [for (var i = 0; i < 42; i++) DateTime(start.year, start.month, start.day + i)];
+    return [
+      for (var i = 0; i < 42; i++)
+        DateTime(start.year, start.month, start.day + i),
+    ];
   }
 }
 
@@ -278,12 +311,19 @@ class _DayCell extends StatelessWidget {
     final isToday = dateKey(day) == todayKey;
     final isSunday = day.weekday == DateTime.sunday;
     final dateColor = isSunday
-        ? (inMonth ? theme.colors.destructive : theme.colors.disable(theme.colors.destructive))
+        ? (inMonth
+              ? theme.colors.destructive
+              : theme.colors.disable(theme.colors.destructive))
         : (inMonth ? theme.colors.foreground : theme.colors.mutedForeground);
 
     final dateNumber = Text(
       '${day.day}',
-      style: theme.bodyStyle.copyWith(fontWeight: FontWeight.w700, fontSize: 16, height: 1, color: dateColor),
+      style: theme.bodyStyle.copyWith(
+        fontWeight: FontWeight.w700,
+        fontSize: 16,
+        height: 1,
+        color: dateColor,
+      ),
     );
 
     return Semantics(
@@ -303,7 +343,10 @@ class _DayCell extends StatelessWidget {
                 decoration: isToday && inMonth
                     ? BoxDecoration(
                         shape: BoxShape.circle,
-                        border: Border.all(color: theme.colors.foreground, width: 1.5),
+                        border: Border.all(
+                          color: theme.colors.foreground,
+                          width: 1.5,
+                        ),
                       )
                     : null,
                 child: dateNumber,
@@ -334,7 +377,11 @@ class _DayCell extends StatelessWidget {
                                   ),
                                 ),
                                 const SizedBox(width: 3),
-                                Icon(FLucideIcons.clock, size: 18, color: theme.colors.background),
+                                Icon(
+                                  FLucideIcons.clock,
+                                  size: 18,
+                                  color: theme.colors.background,
+                                ),
                               ],
                             ),
                           ),

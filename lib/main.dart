@@ -5,9 +5,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'src/app.dart';
 import 'src/config/supabase_config.dart';
+import 'src/core/formatters.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  initOrgTimezones();
 
   // Clean paths such as /admin/attendance instead of /#/admin/attendance. The
   // server must answer every one of those paths with index.html, which the

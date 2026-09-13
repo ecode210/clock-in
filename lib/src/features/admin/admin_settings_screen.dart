@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../models/org_settings.dart';
 import '../../routing/router.dart';
+import '../../services/locations_repository.dart';
 import '../../services/supabase_providers.dart';
 import '../shared/widgets.dart';
 
@@ -18,7 +19,10 @@ class AdminSettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(orgSettingsProvider).value;
+    final locations = ref.watch(locationsProvider).value;
     final me = ref.watch(myProfileProvider).value;
+    final activeCount =
+        locations?.where((l) => l.isActive).length ?? 0;
 
     return AppScaffold(
       childPad: false,
@@ -32,16 +36,17 @@ class AdminSettingsScreen extends ConsumerWidget {
               children: [
                 FTile(
                   prefix: const TileIcon(FLucideIcons.mapPin),
-                  title: const Text('Clock-in zone'),
+                  title: const Text('Clock-in locations'),
                   subtitle: Text(
-                    settings == null
+                    locations == null
                         ? 'Set where staff may clock in'
-                        : settings.isGeofenceConfigured
-                        ? '${settings.locationName} · ${settings.radiusMeters} m'
-                        : 'Not set up yet',
+                        : activeCount == 0
+                        ? 'None set up yet'
+                        : '$activeCount '
+                            '${activeCount == 1 ? 'location' : 'locations'}',
                   ),
                   suffix: const Icon(FLucideIcons.chevronRight),
-                  onPress: () => context.go(AppRoutes.adminLocation),
+                  onPress: () => context.go(AppRoutes.adminLocations),
                 ),
                 FTile(
                   prefix: const TileIcon(FLucideIcons.shieldCheck),
@@ -81,13 +86,12 @@ class AdminSettingsScreen extends ConsumerWidget {
   }
 
   static String _verificationSummary(OrgSettings? settings) {
-    if (settings == null) return 'Passkey and live photo checks';
-    final checks = [
+    if (settings == null) return 'Passkey and live photo';
+    final checks = <String>[
       if (settings.requirePasskey) 'Passkey',
       if (settings.requireSelfie) 'Live photo',
     ];
-    return checks.isEmpty
-        ? 'No checks required'
-        : '${checks.join(' + ')} required';
+    if (checks.isEmpty) return 'Location only';
+    return checks.join(' · ');
   }
 }

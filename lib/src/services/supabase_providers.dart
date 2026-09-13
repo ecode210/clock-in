@@ -51,8 +51,18 @@ final myProfileProvider = FutureProvider<Profile?>((ref) async {
 
 final orgSettingsProvider = FutureProvider<OrgSettings>((ref) async {
   // Settings are readable by any signed-in user because staff need the
-  // geofence to show their live distance.
-  ref.watch(currentUserIdProvider);
+  // geofence to show their live distance. Skip while signed out so a 401
+  // does not linger into the next sign-in.
+  final userId = ref.watch(currentUserIdProvider);
+  if (userId == null) {
+    return const OrgSettings(
+      orgName: '',
+      timezone: 'UTC',
+      requireSelfie: false,
+      requirePasskey: false,
+      passkeyFreshnessSeconds: 300,
+    );
+  }
 
   final client = ref.watch(supabaseClientProvider);
   final row = await withClockSkewRetry(
@@ -64,7 +74,9 @@ final orgSettingsProvider = FutureProvider<OrgSettings>((ref) async {
 
 /// Drives the first-run screen that lets the very first account become admin.
 final adminExistsProvider = FutureProvider<bool>((ref) async {
-  ref.watch(currentUserIdProvider);
+  final userId = ref.watch(currentUserIdProvider);
+  if (userId == null) return false;
+
   final client = ref.watch(supabaseClientProvider);
   final result = await withClockSkewRetry(() => client.rpc('admin_exists'));
   return result == true;

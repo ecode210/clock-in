@@ -4,12 +4,11 @@ import 'package:forui/forui.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/formatters.dart';
-import '../../models/attendance_record.dart';
 import '../../models/org_settings.dart';
 import '../../models/profile.dart';
 import '../../routing/router.dart';
 import '../../services/attendance_repository.dart';
-import '../../services/staff_repository.dart';
+import '../../services/locations_repository.dart';
 import '../../services/supabase_providers.dart';
 import '../shared/widgets.dart';
 import 'attendance_row_tile.dart';
@@ -19,9 +18,9 @@ class AdminDashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final today = ref.watch(todayAttendanceProvider);
-    final staff = ref.watch(staffListProvider);
+    final snapshot = ref.watch(todaySnapshotProvider);
     final settings = ref.watch(orgSettingsProvider);
+    final locations = ref.watch(activeLocationsProvider);
 
     return AppScaffold(
       childPad: false,
@@ -33,8 +32,8 @@ class AdminDashboardScreen extends ConsumerWidget {
             semanticsLabel: 'Refresh',
             onPress: () {
               ref.invalidate(orgTodayProvider);
-              ref.invalidate(todayAttendanceProvider);
-              ref.invalidate(staffListProvider);
+              ref.invalidate(todaySnapshotProvider);
+              ref.invalidate(activeLocationsProvider);
             },
           ),
         ],
@@ -43,52 +42,66 @@ class AdminDashboardScreen extends ConsumerWidget {
         value: settings,
         onRetry: () => ref.invalidate(orgSettingsProvider),
         builder: (settingsData) => AsyncSection(
-          value: today,
-          onRetry: () => ref.invalidate(todayAttendanceProvider),
-          builder: (records) => PagePadding(
-            maxWidth: 700,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (!settingsData.isGeofenceConfigured) ...[
-                  const _SetupPrompt(),
-                  const SizedBox(height: gutter),
-                ],
-                _StatsCard(
-                  records: records,
-                  activeStaffCount: staff.value
-                      ?.where((p) => p.isActive)
-                      .length,
-                ),
-                const SizedBox(height: gutter),
-                _VerificationSummary(settings: settingsData),
-                const SizedBox(height: gutter),
-                if (records.isEmpty)
-                  const FCard(
-                    child: EmptyState(
-                      icon: FLucideIcons.users,
-                      title: 'Nobody has clocked in yet',
-                      message: 'Records appear here as staff arrive.',
-                    ),
-                  )
-                else
-                  FTileGroup(
-                    label: Text('Clocked in · ${formatDay(DateTime.now())}'),
-                    children: [
-                      for (final record in records)
-                        AttendanceRowTile(record: record),
-                    ],
+          value: locations,
+          onRetry: () => ref.invalidate(activeLocationsProvider),
+          builder: (locationList) => AsyncSection(
+            value: snapshot,
+            onRetry: () => ref.invalidate(todaySnapshotProvider),
+            builder: (data) => PagePadding(
+              maxWidth: 700,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (locationList.isEmpty) ...[
+                    const _SetupPrompt(),
+                    const SizedBox(height: gutter),
+                  ],
+                  _StatsCard(
+                    people: data.people,
+                    onShift: data.onShift,
+                    completed: data.completed,
+                    activeStaffCount: data.people + data.absent.length,
                   ),
-                const SizedBox(height: 10),
-                FButton(
-                  variant: FButtonVariant.outline,
-                  onPress: () => context.go(AppRoutes.adminAttendance),
-                  suffix: const Icon(FLucideIcons.chevronRight),
-                  child: const ButtonLabel('All records'),
-                ),
-                const SizedBox(height: gutter),
-                _AbsentCard(records: records, staff: staff.value),
-              ],
+                  const SizedBox(height: gutter),
+                  _VerificationSummary(
+                    settings: settingsData,
+                    locationCount: locationList.length,
+                  ),
+                  const SizedBox(height: gutter),
+                  if (data.recent.isEmpty)
+                    const FCard(
+                      child: EmptyState(
+                        icon: FLucideIcons.users,
+                        title: 'Nobody has clocked in yet',
+                        message: 'Records appear here as staff arrive.',
+                      ),
+                    )
+                  else
+                    FTileGroup(
+                      label: Text(
+                        'Visits · ${formatDay(data.workDate)}',
+                      ),
+                      children: [
+                        for (final record in data.recent)
+                          AttendanceRowTile(
+                            record: record,
+                            timezone: settingsData.timezone,
+                            onReviewed: () =>
+                                ref.invalidate(todaySnapshotProvider),
+                          ),
+                      ],
+                    ),
+                  const SizedBox(height: 10),
+                  FButton(
+                    variant: FButtonVariant.outline,
+                    onPress: () => context.go(AppRoutes.adminAttendance),
+                    suffix: const Icon(FLucideIcons.chevronRight),
+                    child: const ButtonLabel('All records'),
+                  ),
+                  const SizedBox(height: gutter),
+                  _AbsentCard(absent: data.absent),
+                ],
+              ),
             ),
           ),
         ),
@@ -107,42 +120,42 @@ class _SetupPrompt extends StatelessWidget {
       const FAlert(
         variant: FAlertVariant.destructive,
         icon: Icon(FLucideIcons.mapPinOff),
-        title: Text('No clock-in zone has been set'),
-        subtitle: Text('Nobody can mark attendance until you set one.'),
+        title: Text('No clock-in locations have been set'),
+        subtitle: Text('Nobody can mark attendance until you add one.'),
       ),
       const SizedBox(height: 10),
       FButton(
-        onPress: () => context.go(AppRoutes.adminLocation),
-        child: const ButtonLabel('Set up the zone'),
+        onPress: () => context.go(AppRoutes.adminLocations),
+        child: const ButtonLabel('Add a location'),
       ),
     ],
   );
 }
 
 class _StatsCard extends StatelessWidget {
-  const _StatsCard({required this.records, required this.activeStaffCount});
+  const _StatsCard({
+    required this.people,
+    required this.onShift,
+    required this.completed,
+    required this.activeStaffCount,
+  });
 
-  final List<AttendanceRecord> records;
-  final int? activeStaffCount;
+  final int people;
+  final int onShift;
+  final int completed;
+  final int activeStaffCount;
 
   @override
   Widget build(BuildContext context) {
-    final onShift = records.where((r) => r.isOpen).length;
-    final completed = records.length - onShift;
-
-    // Three figures side by side rather than three cards: on a phone this
-    // reads as one glanceable summary instead of a stack to scroll past.
     return ContentCard(
       child: MetricRow(
         figures: [
           MetricFigure(
-            label: 'Clocked in',
-            value:
-                '${records.length}'
-                '${activeStaffCount == null ? '' : '/$activeStaffCount'}',
+            label: 'People',
+            value: '$people/$activeStaffCount',
           ),
           MetricFigure(label: 'On shift', value: '$onShift'),
-          MetricFigure(label: 'Finished', value: '$completed'),
+          MetricFigure(label: 'Visits done', value: '$completed'),
         ],
       ),
     );
@@ -150,9 +163,13 @@ class _StatsCard extends StatelessWidget {
 }
 
 class _VerificationSummary extends StatelessWidget {
-  const _VerificationSummary({required this.settings});
+  const _VerificationSummary({
+    required this.settings,
+    required this.locationCount,
+  });
 
   final OrgSettings settings;
+  final int locationCount;
 
   @override
   Widget build(BuildContext context) {
@@ -172,14 +189,12 @@ class _VerificationSummary extends StatelessWidget {
           runSpacing: 8,
           children: [
             StatusChip(
-              label: settings.isGeofenceConfigured
-                  ? '${settings.locationName} · '
-                        '${formatDistance(settings.radiusMeters.toDouble())}'
-                  : 'Location not set',
+              label: locationCount == 0
+                  ? 'No locations'
+                  : '$locationCount '
+                        '${locationCount == 1 ? 'location' : 'locations'}',
               icon: FLucideIcons.mapPin,
-              tone: settings.isGeofenceConfigured
-                  ? ChipTone.positive
-                  : ChipTone.negative,
+              tone: locationCount == 0 ? ChipTone.negative : ChipTone.positive,
             ),
             StatusChip(
               label: settings.requirePasskey ? 'Passkey on' : 'Passkey off',
@@ -206,26 +221,15 @@ class _VerificationSummary extends StatelessWidget {
 
 /// Who has not shown up. This is usually the reason an admin opens the app.
 class _AbsentCard extends StatelessWidget {
-  const _AbsentCard({required this.records, required this.staff});
+  const _AbsentCard({required this.absent});
 
-  final List<AttendanceRecord> records;
-  final List<Profile>? staff;
+  final List<Profile> absent;
 
   @override
   Widget build(BuildContext context) {
-    final all = staff;
-    if (all == null) return const SizedBox.shrink();
-
-    final clockedIn = records.map((r) => r.userId).toSet();
-    final absent = all
-        .where((p) => p.isActive && !clockedIn.contains(p.id))
-        .toList();
-
     return SectionCard(
       title: 'Not clocked in',
-      subtitle:
-          '${absent.length} of '
-          '${all.where((p) => p.isActive).length} active staff',
+      subtitle: '${absent.length} active staff still to arrive',
       children: [
         if (absent.isEmpty)
           const EmptyState(

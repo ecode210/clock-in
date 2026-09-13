@@ -1,18 +1,69 @@
 import 'package:intl/intl.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
 
 final _timeFormat = DateFormat('h:mm a');
 final _dayFormat = DateFormat('EEE d MMM yyyy');
 final _shortDayFormat = DateFormat('EEE d MMM');
 final _monthYearFormat = DateFormat('MMMM yyyy');
+final _exportStampFormat = DateFormat('dd MMM yyyy HH:mm');
+final _exportDayFormat = DateFormat('dd MMM yyyy');
 
-String formatTime(DateTime? value) =>
-    value == null ? '-' : _timeFormat.format(value);
+bool _timezonesReady = false;
 
-String formatDay(DateTime value) => _dayFormat.format(value);
+/// Loads IANA zone data once at app start.
+void initOrgTimezones() {
+  if (_timezonesReady) return;
+  tzdata.initializeTimeZones();
+  _timezonesReady = true;
+}
 
-String formatShortDay(DateTime value) => _shortDayFormat.format(value);
+tz.Location _location(String timezone) {
+  initOrgTimezones();
+  try {
+    return tz.getLocation(timezone);
+  } catch (_) {
+    return tz.UTC;
+  }
+}
+
+/// Instant [value] shown in the organisation's working timezone.
+DateTime inOrgTimezone(DateTime value, String timezone) {
+  return tz.TZDateTime.from(value.toUtc(), _location(timezone));
+}
+
+/// "Right now" in the organisation timezone.
+DateTime orgNow(String timezone) {
+  return tz.TZDateTime.now(_location(timezone));
+}
+
+String formatTime(DateTime? value, {String? timezone}) {
+  if (value == null) return '-';
+  final shown = timezone == null ? value.toLocal() : inOrgTimezone(value, timezone);
+  return _timeFormat.format(shown);
+}
+
+String formatDay(DateTime value, {String? timezone}) {
+  final shown = timezone == null ? value : inOrgTimezone(value, timezone);
+  return _dayFormat.format(shown);
+}
+
+String formatShortDay(DateTime value, {String? timezone}) {
+  final shown = timezone == null ? value : inOrgTimezone(value, timezone);
+  return _shortDayFormat.format(shown);
+}
 
 String formatMonthYear(DateTime value) => _monthYearFormat.format(value);
+
+/// Timestamps in exported spreadsheets and PDFs: `13 Sep 2026 08:04`.
+String formatExportStamp(DateTime? value, {String? timezone}) {
+  if (value == null) return '-';
+  final shown = timezone == null ? value.toLocal() : inOrgTimezone(value, timezone);
+  return _exportStampFormat.format(shown);
+}
+
+/// Calendar days in export filenames and titles: `13 Sep 2026`.
+String formatExportDay(DateTime value) => _exportDayFormat.format(value);
 
 /// Calendar and query key for a date-only value: `2026-09-10`.
 ///

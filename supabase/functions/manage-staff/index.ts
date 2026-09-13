@@ -84,15 +84,38 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Passwords must be at least 8 characters." }, 400);
     }
 
+    // updateUser on a throwaway client needs an in-memory session. We only
+    // have the access token, so call GoTrue with it directly. That keeps this
+    // session and only revokes others, which is why we do not use the admin API.
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const asCaller = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { autoRefreshToken: false, persistSession: false },
+    const updateRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: anonKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ password }),
     });
 
-    const { error } = await asCaller.auth.updateUser({ password });
-    if (error) {
-      const code = (error as { code?: string }).code ?? "";
+    if (!updateRes.ok) {
+      const payload = await updateRes.json().catch(() => ({})) as {
+        code?: string | number;
+        error_code?: string;
+        msg?: string;
+        message?: string;
+        error?: string;
+      };
+      const code = String(payload.error_code ?? payload.code ?? "");
+      const detail = String(
+        payload.msg ?? payload.message ?? payload.error ?? "",
+      );
+      console.error("change_own_password failed", {
+        status: updateRes.status,
+        code,
+        detail,
+      });
+
       if (code === "same_password") {
         return json(
           {
@@ -102,11 +125,14 @@ Deno.serve(async (req: Request) => {
           400,
         );
       }
-      if (code === "weak_password") {
+      if (
+        code === "weak_password" ||
+        /weak|pwned|leaked|easy to guess/i.test(detail)
+      ) {
         return json(
           {
             error:
-              "That password is too easy to guess. Use at least 8 characters with a mix of letters and numbers.",
+              "That password is too common or easy to guess. Choose a longer one that is not a well-known phrase.",
           },
           400,
         );
@@ -210,7 +236,23 @@ Deno.serve(async (req: Request) => {
 
     const { error } = await admin.auth.admin.updateUserById(userId, { password });
     if (error) {
-      return json({ error: error.message }, 400);
+      const code = (error as { code?: string }).code ?? "";
+      if (code === "weak_password") {
+        return json(
+          {
+            error:
+              "That password is too easy to guess. Use at least 8 characters with a mix of letters and numbers.",
+          },
+          400,
+        );
+      }
+      return json(
+        {
+          error:
+            "That password could not be reset. Please try again, and contact your administrator if it keeps happening.",
+        },
+        400,
+      );
     }
 
     await admin

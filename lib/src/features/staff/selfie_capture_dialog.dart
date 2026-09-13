@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:forui/forui.dart';
 
 import '../../core/app_error.dart';
+import '../../core/dev_log.dart';
 import '../../services/selfie_service.dart';
 import '../shared/widgets.dart';
 
@@ -88,6 +89,7 @@ class _SelfieCaptureDialogState extends State<SelfieCaptureDialog> {
       });
     } on CameraException catch (error) {
       if (!mounted) return;
+      logFail('camera.start', error);
       setState(() {
         _initialising = false;
         _error = switch (error.code) {
@@ -99,7 +101,7 @@ class _SelfieCaptureDialogState extends State<SelfieCaptureDialog> {
           'NotFoundError' || 'NotReadableError' =>
             'The camera could not be started. Close any other app using it '
                 'and try again.',
-          _ => error.description ?? 'The camera could not be started.',
+          _ => 'The camera could not be started. Please try again.',
         };
       });
     } catch (error) {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -82,8 +83,15 @@ final selfieServiceProvider = Provider<SelfieService>(
   (ref) => SelfieService(ref.watch(supabaseClientProvider)),
 );
 
-/// Signed URLs are requested per selfie path and cached for the provider's
-/// lifetime so scrolling a list does not re-sign the same file repeatedly.
-final selfieUrlProvider = FutureProvider.family<String, String>(
-  (ref, path) => ref.watch(selfieServiceProvider).signedUrl(path),
-);
+/// Signed URLs are requested per selfie path and refreshed before the Storage
+/// expiry so an admin who leaves Today open for a while still sees photos.
+final selfieUrlProvider = FutureProvider.family<String, String>((ref, path) {
+  // Refresh a minute before the 10-minute signed URL expires.
+  final link = ref.keepAlive();
+  final timer = Timer(const Duration(minutes: 9), () {
+    link.close();
+    ref.invalidateSelf();
+  });
+  ref.onDispose(timer.cancel);
+  return ref.watch(selfieServiceProvider).signedUrl(path);
+});

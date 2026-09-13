@@ -12,13 +12,9 @@ class SettingsRepository {
   final SupabaseClient _client;
 
   /// Writes the whole settings row. RLS restricts this to admins and a
-  /// database trigger validates the coordinates and timezone.
+  /// database trigger validates the timezone.
   Future<OrgSettings> save(OrgSettings settings) async {
-    logAction('settings.save', {
-      'radius': settings.radiusMeters,
-      'timezone': settings.timezone,
-      'geofence': settings.geofenceLat == null ? 'unset' : 'set',
-    });
+    logAction('settings.save', {'timezone': settings.timezone});
     try {
       final row = await _client
           .from('org_settings')

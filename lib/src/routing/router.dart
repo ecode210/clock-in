@@ -7,8 +7,10 @@ import '../features/admin/admin_dashboard_screen.dart';
 import '../features/admin/admin_settings_screen.dart';
 import '../features/admin/admin_shell.dart';
 import '../features/admin/attendance_day_screen.dart';
+import '../features/admin/attendance_export_screen.dart';
 import '../features/admin/attendance_history_screen.dart';
-import '../features/admin/geofence_settings_screen.dart';
+import '../features/admin/location_editor_screen.dart';
+import '../features/admin/locations_list_screen.dart';
 import '../features/admin/security_settings_screen.dart';
 import '../features/admin/staff_management_screen.dart';
 import '../features/auth/awaiting_approval_screen.dart';
@@ -46,10 +48,20 @@ class AppRoutes {
   /// Day list under Attendance, so the tab stays selected.
   static String adminAttendanceDay(String date) => '$adminAttendance/$date';
 
+  /// Export form under Attendance. Registered before `:date` so the path is
+  /// not treated as a calendar day.
+  static const adminAttendanceExport = '/admin/attendance/export';
+
   /// Hub tab. The three routes below sit under it so the tab stays selected
   /// while a sub-page is open.
   static const adminSettings = '/admin/settings';
-  static const adminLocation = '/admin/settings/location';
+  static const adminLocations = '/admin/settings/locations';
+  static const adminLocationNew = '/admin/settings/locations/new';
+  static String adminLocationEdit(String id) => '$adminLocations/$id';
+
+  /// Kept so old bookmarks to the single-zone page still land somewhere useful.
+  static const adminLocation = adminLocations;
+
   static const adminSecurity = '/admin/settings/security';
   static const adminAccount = '/admin/settings/account';
 }
@@ -184,6 +196,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const AttendanceHistoryScreen(),
           ),
           GoRoute(
+            path: AppRoutes.adminAttendanceExport,
+            builder: (context, state) => AttendanceExportScreen(
+              initialFrom: state.uri.queryParameters['from'],
+              initialTo: state.uri.queryParameters['to'],
+            ),
+          ),
+          GoRoute(
             path: '${AppRoutes.adminAttendance}/:date',
             builder: (context, state) => AttendanceDayScreen(
               date: state.pathParameters['date']!,
@@ -198,8 +217,18 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const AdminSettingsScreen(),
           ),
           GoRoute(
-            path: AppRoutes.adminLocation,
-            builder: (context, state) => const GeofenceSettingsScreen(),
+            path: AppRoutes.adminLocations,
+            builder: (context, state) => const LocationsListScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.adminLocationNew,
+            builder: (context, state) => const LocationEditorScreen(),
+          ),
+          GoRoute(
+            path: '${AppRoutes.adminLocations}/:id',
+            builder: (context, state) => LocationEditorScreen(
+              locationId: state.pathParameters['id'],
+            ),
           ),
           GoRoute(
             path: AppRoutes.adminSecurity,

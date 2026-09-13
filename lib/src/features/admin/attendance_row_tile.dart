@@ -7,6 +7,7 @@ import '../../core/formatters.dart';
 import '../../models/attendance_record.dart';
 import '../../services/attendance_repository.dart';
 import '../../services/selfie_service.dart';
+import '../../services/supabase_providers.dart';
 import '../shared/widgets.dart';
 
 /// One attendance row as the admin sees it: who, when, how far out, and the
@@ -15,12 +16,17 @@ class AttendanceRowTile extends StatelessWidget with FTileMixin {
   const AttendanceRowTile({
     required this.record,
     this.showDate = false,
+    this.timezone,
     this.onReviewed,
     super.key,
   });
 
   final AttendanceRecord record;
   final bool showDate;
+
+  /// Organisation timezone for clock-in/out stamps. Falls back to the device
+  /// zone only when settings have not loaded yet.
+  final String? timezone;
 
   /// Called after the review state changes, so the list this row belongs to
   /// can refetch. Each screen holds its own query, so neither can invalidate
@@ -40,8 +46,8 @@ class AttendanceRowTile extends StatelessWidget with FTileMixin {
         children: [
           Text(
             '${showDate ? '${formatShortDay(record.workDate)} · ' : ''}'
-            '${formatTime(record.clockInAt)} → '
-            '${formatTime(record.clockOutAt)}',
+            '${formatTime(record.clockInAt, timezone: timezone)} → '
+            '${formatTime(record.clockOutAt, timezone: timezone)}',
           ),
           const SizedBox(height: 6),
           Wrap(
@@ -49,8 +55,12 @@ class AttendanceRowTile extends StatelessWidget with FTileMixin {
             runSpacing: 6,
             children: [
               StatusChip(
-                label: '${formatDistance(record.clockInDistanceMeters)} out',
+                label: record.displayLocationName,
                 icon: FLucideIcons.mapPin,
+              ),
+              StatusChip(
+                label: '${formatDistance(record.clockInDistanceMeters)} out',
+                icon: FLucideIcons.crosshair,
               ),
               if (record.verifiedWithPasskey)
                 const StatusChip(
@@ -122,12 +132,15 @@ class SelfieThumbnail extends ConsumerWidget {
 
     return url.when(
       loading: () => FAvatar.raw(size: _size),
-      error: (_, _) => FAvatar.raw(
-        size: _size,
-        child: Icon(
-          FLucideIcons.imageOff,
-          size: 16,
-          color: context.theme.colors.mutedForeground,
+      error: (_, _) => GestureDetector(
+        onTap: () => ref.invalidate(selfieUrlProvider(path)),
+        child: FAvatar.raw(
+          size: _size,
+          child: Icon(
+            FLucideIcons.refreshCw,
+            size: 16,
+            color: context.theme.colors.mutedForeground,
+          ),
         ),
       ),
       data: (signedUrl) => GestureDetector(
@@ -136,12 +149,17 @@ class SelfieThumbnail extends ConsumerWidget {
           builder: (dialogContext, style, animation) => _SelfieReviewDialog(
             record: record,
             signedUrl: signedUrl,
+            path: path,
             onReviewed: onReviewed,
           ),
         ),
         child: FAvatar(
           size: _size,
-          image: NetworkImage(signedUrl),
+          image: ResizeImage(
+            NetworkImage(signedUrl),
+            width: (_size * 3).round(),
+            height: (_size * 3).round(),
+          ),
           semanticsLabel: 'View clock-in photo',
         ),
       ),
@@ -158,11 +176,13 @@ class _SelfieReviewDialog extends ConsumerStatefulWidget {
   const _SelfieReviewDialog({
     required this.record,
     required this.signedUrl,
+    required this.path,
     this.onReviewed,
   });
 
   final AttendanceRecord record;
   final String signedUrl;
+  final String path;
   final VoidCallback? onReviewed;
 
   @override
@@ -180,7 +200,7 @@ class _SelfieReviewDialogState extends ConsumerState<_SelfieReviewDialog> {
       final updated = await ref
           .read(attendanceRepositoryProvider)
           .review(widget.record.id, status);
-      ref.invalidate(todayAttendanceProvider);
+      ref.invalidate(todaySnapshotProvider);
       widget.onReviewed?.call();
 
       if (!mounted) return;
@@ -200,18 +220,40 @@ class _SelfieReviewDialogState extends ConsumerState<_SelfieReviewDialog> {
   @override
   Widget build(BuildContext context) {
     final record = widget.record;
+    final timezone = ref.watch(orgSettingsProvider).value?.timezone;
 
     return AppDialog(
       title: record.staff?.displayName ?? 'Clock-in photo',
       message:
           '${formatShortDay(record.workDate)} at '
-          '${formatTime(record.clockInAt)}',
+          '${formatTime(record.clockInAt, timezone: timezone)}',
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.network(widget.signedUrl, fit: BoxFit.contain),
+            child: Image.network(
+              widget.signedUrl,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stack) => Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    const Text(
+                      'This photo link expired. Tap below to load a fresh one.',
+                    ),
+                    const SizedBox(height: 12),
+                    FButton(
+                      onPress: () {
+                        ref.invalidate(selfieUrlProvider(widget.path));
+                        Navigator.of(context).pop();
+                      },
+                      child: const ButtonLabel('Reload photo'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
           if (_status != ReviewStatus.unreviewed) ...[
             const SizedBox(height: 12),

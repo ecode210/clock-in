@@ -48,11 +48,12 @@ dependencies:
   # Pinned by flutter_localizations, which forui pulls in for its l10n.
   intl: 0.20.2
   forui: 0.25.0
+  excel: ^4.0.6
+  pdf: ^3.12.0
+  web: ^1.1.1
+  timezone: ^0.11.1
 
 dev_dependencies:
-  flutter_test:
-    sdk: flutter
-
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your

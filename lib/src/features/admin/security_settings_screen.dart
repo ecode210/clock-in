@@ -132,27 +132,6 @@ class _SecurityFormState extends ConsumerState<_SecurityForm> {
             ),
           ],
           const SizedBox(height: gutter),
-          FTileGroup(
-            label: const Text('Clock-out'),
-            children: [
-              FTile(
-                prefix: const TileIcon(FLucideIcons.doorOpen),
-                title: const Text('Allow clocking out from anywhere'),
-                subtitle: const TileSubtitle(
-                  'Useful when staff forget to clock out before leaving. '
-                  'Clock-in always requires being on site.',
-                ),
-                suffix: FSwitch(
-                  value: settings.allowClockOutOutsideGeofence,
-                  enabled: !_anyBusy,
-                  onChange: (value) => _patch('clockout', {
-                    'allow_clock_out_outside_geofence': value,
-                  }),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: gutter),
           ContentCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
