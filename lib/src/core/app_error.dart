@@ -169,7 +169,8 @@ AppError _authError(AuthException error) {
       code: 'signup_disabled',
     );
   }
-  if (has('rate_limit') || has('over_request_rate_limit') ||
+  if (has('rate_limit') ||
+      code.contains('rate_limit') ||
       error.statusCode == '429') {
     return const AppError(
       'Too many attempts. Wait a minute and try again.',
@@ -188,6 +189,65 @@ AppError _authError(AuthException error) {
     return const AppError(
       'This account has been suspended. Contact your administrator.',
       code: 'user_banned',
+    );
+  }
+  if (has('email_exists') || has('user_already_exists')) {
+    return const AppError(
+      'An account with that email already exists.',
+      code: 'email_exists',
+    );
+  }
+  if (has('session_missing')) {
+    return const AppError(
+      'Your session has expired. Sign in again to continue.',
+      code: 'session_expired',
+    );
+  }
+  if (has('request_timeout')) {
+    return const AppError(
+      'The request took too long. Check your connection and try again.',
+      code: 'request_timeout',
+    );
+  }
+  if (has('passkey_disabled') || has('mfa_webauthn_verify_not_enabled')) {
+    return const AppError(
+      'Passkeys are not enabled for this organisation yet.',
+      code: 'passkey_disabled',
+    );
+  }
+  if (has('too_many_passkeys') || has('webauthn_credential_exists')) {
+    return const AppError(
+      'This account already has a passkey. Ask an administrator to reset it '
+      'before setting one up on another device.',
+      code: 'passkey_already_registered',
+    );
+  }
+  if (has('webauthn_credential_not_found')) {
+    return const AppError(
+      'That passkey is not registered for this app. Use the one you set up '
+      'for this account, or sign in with your password and add a passkey '
+      'from Settings.',
+      code: 'passkey_not_registered',
+    );
+  }
+  if (has('webauthn_challenge_expired') ||
+      has('webauthn_challenge_not_found') ||
+      has('flow_state_expired') ||
+      has('flow_state_not_found')) {
+    return const AppError(
+      'The passkey check expired. Please try again.',
+      code: 'passkey_expired',
+    );
+  }
+  if (has('webauthn_verification_failed') ||
+      code.contains('webauthn') ||
+      code.contains('passkey') ||
+      text.contains('webauthn') ||
+      text.contains('passkey')) {
+    return const AppError(
+      'That passkey could not be verified. Use the passkey you set up for '
+      'this account, then try again.',
+      code: 'passkey_rejected',
     );
   }
 

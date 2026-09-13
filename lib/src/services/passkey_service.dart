@@ -2,6 +2,7 @@
 // deliberately as one of its two anti-buddy-punching measures.
 // ignore_for_file: experimental_member_use
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:passkeys/authenticator.dart';
 import 'package:passkeys/exceptions.dart' as pk;
@@ -155,38 +156,15 @@ class PasskeyService {
 
   AppError _translate(Object error, {String action = 'passkey'}) {
     logFail(action, error);
+
     if (error is pk.AuthenticatorException) {
-      return switch (error) {
-        pk.PasskeyAuthCancelledException() => const AppError(
-          'Passkey verification was cancelled.',
-          code: 'passkey_cancelled',
-        ),
-        pk.NoCredentialsAvailableException() => const AppError(
-          'No passkey for this app is available on this device. Sign in with '
-          'your password, then add a passkey from your account page.',
-          code: 'passkey_not_registered',
-        ),
-        pk.DeviceNotSupportedException() ||
-        pk.PasskeyUnsupportedException() => const AppError(
-          'This device or browser does not support passkeys.',
-          code: 'passkey_unsupported',
-        ),
-        pk.TimeoutException() => const AppError(
-          'The passkey prompt timed out. Please try again.',
-          code: 'passkey_expired',
-        ),
-        pk.DomainNotAssociatedException() => const AppError(
-          'Passkeys are not configured for this domain yet. Ask your '
-          'administrator to check the passkey settings.',
-          code: 'passkey_domain',
-        ),
-        _ => AppError(
-          'Passkey verification could not be completed. Please try again, or '
-          'sign in with your password instead.',
-          code: 'passkey_failed',
-          technical: error.toString(),
-        ),
-      };
+      return _authenticatorError(error);
+    }
+
+    // On web the passkeys plugin rethrows unmapped browser codes as a raw
+    // PlatformException instead of wrapping them as AuthenticatorException.
+    if (error is PlatformException) {
+      return _ceremonyCodeError(error.code, error.message, error.details);
     }
 
     if (error is AuthException) {
@@ -199,30 +177,151 @@ class PasskeyService {
           code: 'passkey_already_registered',
         );
       }
-
-      return switch (error.code) {
-        'passkey_disabled' => const AppError(
-          'Passkeys are not enabled for this organisation yet.',
-          code: 'passkey_disabled',
-        ),
-        'webauthn_credential_not_found' => const AppError(
-          'This device has no passkey registered for the app. Sign in with '
-          'your password, then add a passkey from your account page.',
-          code: 'passkey_not_registered',
-        ),
-        'webauthn_credential_exists' => const AppError(
-          'This device already has a passkey registered for your account.',
-          code: 'passkey_exists',
-        ),
-        'webauthn_challenge_expired' => const AppError(
-          'The passkey prompt timed out. Please try again.',
-          code: 'passkey_expired',
-        ),
-        _ => toAppError(error),
-      };
+      return toAppError(error);
     }
 
-    return toAppError(error);
+    final mapped = toAppError(error);
+    if (mapped.code == 'offline') return mapped;
+    return AppError(
+      'Passkey verification could not be completed. Use the passkey you set '
+      'up for this account, or try again.',
+      code: 'passkey_failed',
+      technical: error.toString(),
+    );
+  }
+
+  AppError _authenticatorError(pk.AuthenticatorException error) {
+    return switch (error) {
+      pk.PasskeyAuthCancelledException() => const AppError(
+        'Passkey verification was cancelled.',
+        code: 'passkey_cancelled',
+      ),
+      pk.NoCredentialsAvailableException() => const AppError(
+        'No passkey for this app is available on this device. Sign in with '
+        'your password, then add a passkey from Settings.',
+        code: 'passkey_not_registered',
+      ),
+      pk.DeviceNotSupportedException() ||
+      pk.PasskeyUnsupportedException() => const AppError(
+        'This device or browser does not support passkeys.',
+        code: 'passkey_unsupported',
+      ),
+      pk.TimeoutException() => const AppError(
+        'The passkey prompt timed out. Please try again.',
+        code: 'passkey_expired',
+      ),
+      pk.DomainNotAssociatedException() => const AppError(
+        'Passkeys are not configured for this domain yet. Ask your '
+        'administrator to check the passkey settings.',
+        code: 'passkey_domain',
+      ),
+      pk.MissingGoogleSignInException() => const AppError(
+        'Sign in to your Google account on this device, then try the '
+        'passkey again.',
+        code: 'passkey_google_signin',
+      ),
+      pk.SyncAccountNotAvailableException() => const AppError(
+        'This device could not reach the account that stores your passkeys. '
+        'Check that you are signed in to Google, then try again.',
+        code: 'passkey_sync_account',
+      ),
+      pk.ExcludeCredentialsCanNotBeRegisteredException() => const AppError(
+        'A passkey for this account is already on this device.',
+        code: 'passkey_exists',
+      ),
+      pk.NoCreateOptionException() => const AppError(
+        'This device has no passkey provider available. Enable passkeys in '
+        'the device settings, then try again.',
+        code: 'passkey_no_provider',
+      ),
+      pk.UnhandledAuthenticatorException(
+        :final code,
+        :final message,
+        :final details,
+      ) =>
+        _ceremonyCodeError(code, message, details),
+      _ => AppError(
+        'Passkey verification could not be completed. Use the passkey you '
+        'set up for this account, or try again.',
+        code: 'passkey_failed',
+        technical: error.toString(),
+      ),
+    };
+  }
+
+  /// Maps browser and plugin ceremony codes that never become a typed
+  /// [pk.AuthenticatorException] on web.
+  AppError _ceremonyCodeError(String code, String? message, Object? details) {
+    final key = code.toLowerCase();
+    final technical = [code, message, details].whereType<Object>().join(' ');
+
+    if (key == 'cancelled' ||
+        key == 'cancelled-by-user' ||
+        key == 'notallowederror' ||
+        key == 'aborterror' ||
+        key == 'suppressed') {
+      return AppError(
+        'Passkey verification was cancelled or this device rejected it. '
+        'Try again with your own passkey.',
+        code: 'passkey_cancelled',
+        technical: technical,
+      );
+    }
+    if (key.contains('timeout')) {
+      return AppError(
+        'The passkey prompt timed out. Please try again.',
+        code: 'passkey_expired',
+        technical: technical,
+      );
+    }
+    if (key == 'no-credentials-available' || key == 'android-no-credential') {
+      return AppError(
+        'No passkey for this app is available on this device. Sign in with '
+        'your password, then add a passkey from Settings.',
+        code: 'passkey_not_registered',
+        technical: technical,
+      );
+    }
+    if (key.contains('unsupported') ||
+        key == 'devicenotsupported' ||
+        key == 'notsupportederror') {
+      return AppError(
+        'This device or browser does not support passkeys.',
+        code: 'passkey_unsupported',
+        technical: technical,
+      );
+    }
+    if (key == 'domain-not-associated') {
+      return AppError(
+        'Passkeys are not configured for this domain yet. Ask your '
+        'administrator to check the passkey settings.',
+        code: 'passkey_domain',
+        technical: technical,
+      );
+    }
+    if (key == 'securityerror') {
+      return AppError(
+        'This browser blocked the passkey check. Use a secure connection '
+        'and try again.',
+        code: 'passkey_blocked',
+        technical: technical,
+      );
+    }
+    if (key == 'invalidstateerror') {
+      return AppError(
+        'That passkey could not be used. Try again, or pick the one you '
+        'set up for this account.',
+        code: 'passkey_invalid_state',
+        technical: technical,
+      );
+    }
+
+    return AppError(
+      'That passkey could not be verified. Use the passkey you set up for '
+      'this account, then try again.',
+      code: 'passkey_rejected',
+      technical: technical,
+    );
   }
 }
 
