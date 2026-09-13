@@ -58,6 +58,12 @@ class _SelfieCaptureDialogState extends State<SelfieCaptureDialog> {
       _error = null;
     });
 
+    final previous = _controller;
+    _controller = null;
+    if (previous != null) {
+      await previous.dispose();
+    }
+
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
@@ -115,7 +121,7 @@ class _SelfieCaptureDialogState extends State<SelfieCaptureDialog> {
 
   Future<void> _capture() async {
     final controller = _controller;
-    if (controller == null || _capturing) return;
+    if (controller == null || _capturing || _preview != null) return;
 
     setState(() => _capturing = true);
     try {
@@ -132,6 +138,30 @@ class _SelfieCaptureDialogState extends State<SelfieCaptureDialog> {
       if (mounted) setState(() => _error = errorMessage(error));
     } finally {
       if (mounted) setState(() => _capturing = false);
+    }
+  }
+
+  /// Clears the still and keeps the same live stream. Replacing
+  /// [CameraPreview] after capture stops the web video element, so Retake
+  /// only hides the photo and asks the stream to play again.
+  Future<void> _retake() async {
+    setState(() {
+      _preview = null;
+      _error = null;
+      _capturing = false;
+    });
+
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      await _startCamera();
+      return;
+    }
+
+    try {
+      await controller.resumePreview();
+    } catch (error, stack) {
+      logFail('camera.retake', error, stack);
+      if (mounted) await _startCamera();
     }
   }
 
@@ -190,9 +220,6 @@ class _SelfieCaptureDialogState extends State<SelfieCaptureDialog> {
   }
 
   Widget _viewfinder() {
-    if (_preview != null) {
-      return Image.memory(_preview!.bytes, fit: BoxFit.cover);
-    }
     if (_error != null) {
       return Center(
         child: Padding(
@@ -201,19 +228,35 @@ class _SelfieCaptureDialogState extends State<SelfieCaptureDialog> {
         ),
       );
     }
-    if (_initialising || _controller == null) {
-      return const Center(child: FCircularProgress());
-    }
-    // FittedBox keeps the preview filling the frame without distorting it,
-    // which matters because the browser picks the aspect ratio, not us.
-    final size = _controller!.value.previewSize;
-    if (size == null) return CameraPreview(_controller!);
+
+    // Keep [CameraPreview] mounted under the still. On web, removing the
+    // HtmlElementView pauses the video and the next capture redraws that frame.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_initialising || _controller == null)
+          const Center(child: FCircularProgress())
+        else
+          _livePreview(_controller!),
+        if (_preview != null)
+          Positioned.fill(
+            child: Image.memory(_preview!.bytes, fit: BoxFit.cover),
+          ),
+      ],
+    );
+  }
+
+  /// FittedBox keeps the preview filling the frame without distorting it,
+  /// which matters because the browser picks the aspect ratio, not us.
+  Widget _livePreview(CameraController controller) {
+    final size = controller.value.previewSize;
+    if (size == null) return CameraPreview(controller);
     return FittedBox(
       fit: BoxFit.cover,
       child: SizedBox(
         width: size.height,
         height: size.width,
-        child: CameraPreview(_controller!),
+        child: CameraPreview(controller),
       ),
     );
   }
@@ -230,7 +273,7 @@ class _SelfieCaptureDialogState extends State<SelfieCaptureDialog> {
         const SizedBox(height: 10),
         FButton(
           variant: FButtonVariant.outline,
-          onPress: () => setState(() => _preview = null),
+          onPress: _retake,
           prefix: const Icon(FLucideIcons.rotateCw),
           child: const ButtonLabel('Retake'),
         ),
